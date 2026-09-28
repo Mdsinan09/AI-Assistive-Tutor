@@ -1,0 +1,2110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Assistive Tutor — Empowering Visually Impaired Students</title>
+  <style>
+    /* ============================================================
+       APPLE / MODERN SAAS DESIGN SYSTEM FOUNDATIONS
+       ============================================================ */
+    :root {
+      /* Light (White) Mode Defaults */
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #ffffff;
+      --border-subtle: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --primary-blue: #2563eb;
+      --primary-hover: #1d4ed8;
+      --accent-green: #16a34a;
+      --accent-purple: #7c3aed;
+      --accent-amber: #d97706;
+      --accent-red: #ef4444;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 14px rgba(0,0,0,0.07);
+      --shadow-lg: 0 12px 30px rgba(0,0,0,0.09);
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --font-scale: 16px;
+      --spring-timing: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Black Mode Theme */
+    body.theme-black {
+      --bg-canvas: #09090b;
+      --bg-surface: #121215;
+      --bg-surface-elevated: #18181b;
+      --border-subtle: #27272a;
+      --border-strong: #3f3f46;
+      --text-main: #fafafa;
+      --text-muted: #a1a1aa;
+      --primary-blue: #3b82f6;
+      --primary-hover: #60a5fa;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+      --shadow-md: 0 4px 14px rgba(0,0,0,0.6);
+      --shadow-lg: 0 12px 30px rgba(0,0,0,0.7);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: var(--font-scale); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 200ms ease, color 200ms ease;
+    }
+
+    button, input, select {
+      font-family: inherit;
+    }
+    button, .interactive {
+      transition: transform 120ms var(--spring-timing), background-color 150ms ease, border-color 150ms ease;
+      cursor: pointer;
+    }
+    button:active, .interactive:active {
+      transform: scale(0.97);
+    }
+
+    /* ============================================================
+       TOP HEADER NAVIGATION (PHASE 9: NO SIDEBAR)
+       ============================================================ */
+    header.saas-header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-sm);
+    }
+    .header-inner {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-badge {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      color: #ffffff;
+      box-shadow: 0 4px 10px rgba(37,99,235,0.25);
+    }
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .brand-title span.tag {
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: #dbeafe;
+      color: #1d4ed8;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+    }
+    body.theme-black .brand-title span.tag {
+      background: #1e3a8a;
+      color: #93c5fd;
+    }
+
+    /* Navigation Links in Header */
+    nav.header-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .nav-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.93rem;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .nav-btn:hover {
+      background: var(--bg-canvas);
+      color: var(--text-main);
+    }
+    .nav-btn.active {
+      background: var(--primary-blue);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(37,99,235,0.28);
+    }
+
+    /* Right utilities in Header */
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .theme-toggle-btn {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 9999px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .user-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      padding: 5px 12px 5px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+      font-size: 0.88rem;
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #dbeafe;
+      color: #1d4ed8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 800;
+    }
+    body.theme-black .user-avatar {
+      background: #1e3a8a;
+      color: #bfdbfe;
+    }
+    .btn-logout {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--accent-red);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+    .btn-logout:hover {
+      background: #fee2e2;
+    }
+    body.theme-black .btn-logout:hover {
+      background: #450a0a;
+    }
+
+    /* ============================================================
+       AUTHENTICATION SCREEN (PHASE 1)
+       ============================================================ */
+    #auth-view {
+      display: none;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    #auth-view.active {
+      display: flex;
+    }
+    .auth-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: var(--shadow-lg);
+    }
+    .auth-card h2 {
+      font-size: 1.7rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .auth-card p.auth-sub {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+    .auth-tabs {
+      display: flex;
+      background: var(--bg-canvas);
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 1.5rem;
+      border: 1px solid var(--border-subtle);
+    }
+    .auth-tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 700;
+      border-radius: 6px;
+    }
+    .auth-tab.active {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      box-shadow: var(--shadow-sm);
+    }
+    .form-group {
+      margin-bottom: 1.2rem;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .form-control {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1.5px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      background: var(--bg-canvas);
+      color: var(--text-main);
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 150ms ease;
+    }
+    .form-control:focus {
+      border-color: var(--primary-blue);
+    }
+    .btn-auth-submit {
+      width: 100%;
+      background: var(--primary-blue);
+      color: #ffffff;
+      border: none;
+      padding: 13px;
+      border-radius: var(--radius-sm);
+      font-weight: 800;
+      font-size: 1rem;
+      margin-top: 0.5rem;
+      box-shadow: 0 4px 12px rgba(37,99,235,0.3);
+    }
+    .btn-auth-demo {
+      width: 100%;
+      background: var(--bg-canvas);
+      border: 1px dashed var(--border-strong);
+      color: var(--text-main);
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-top: 1rem;
+    }
+    .auth-msg {
+      margin-top: 1rem;
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      display: none;
+      text-align: center;
+      font-weight: 600;
+    }
+    .auth-msg.error {
+      background: #fee2e2;
+      color: #b91c1c;
+      display: block;
+    }
+    .auth-msg.success {
+      background: #dcfce7;
+      color: #15803d;
+      display: block;
+    }
+    body.theme-black .auth-msg.error { background: #450a0a; color: #fca5a5; }
+    body.theme-black .auth-msg.success { background: #052e16; color: #86efac; }
+
+    /* ============================================================
+       APPLICATION VIEWS WRAPPER
+       ============================================================ */
+    main.app-viewport {
+      display: none;
+      flex: 1;
+      max-width: 1320px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem 1.5rem;
+    }
+    main.app-viewport.active {
+      display: block;
+    }
+    .view-pane {
+      display: none;
+      animation: fadeIn 200ms var(--spring-timing);
+    }
+    .view-pane.active {
+      display: block;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Page Titles */
+    .page-title-row {
+      margin-bottom: 2rem;
+    }
+    .greeting-pill {
+      display: inline-block;
+      font-size: 0.85rem;
+      font-weight: 800;
+      color: var(--primary-blue);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .page-title {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .page-subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    /* ============================================================
+       VIEW 1: DASHBOARD
+       ============================================================ */
+    /* Hero Voice Banner */
+    .hero-voice-card {
+      background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%);
+      color: #ffffff;
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 2rem;
+      box-shadow: 0 12px 30px -5px rgba(37,99,235,0.35);
+      margin-bottom: 2.5rem;
+    }
+    .hero-info { max-width: 680px; }
+    .hero-title { font-size: 2rem; font-weight: 800; margin-bottom: 0.5rem; }
+    .hero-desc { font-size: 1.05rem; color: #dbeafe; margin-bottom: 1.6rem; line-height: 1.4; }
+    .hero-actions { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+    .btn-hero-mic {
+      background: #ffffff;
+      color: #1d4ed8;
+      border: none;
+      padding: 13px 26px;
+      border-radius: 9999px;
+      font-size: 1.05rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    }
+    .btn-hero-mic.listening {
+      background: #ef4444;
+      color: #ffffff;
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+    .speech-transcript-box {
+      background: rgba(0,0,0,0.25);
+      backdrop-filter: blur(10px);
+      padding: 8px 16px;
+      border-radius: 9999px;
+      font-size: 0.9rem;
+      color: #e0f2fe;
+    }
+    /* Animated Wave */
+    .sound-wave {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 60px;
+    }
+    .wave-bar {
+      width: 5px;
+      height: 18px;
+      background: rgba(255,255,255,0.4);
+      border-radius: 9999px;
+      animation: soundWave 1.4s ease-in-out infinite;
+    }
+    .wave-bar:nth-child(2) { animation-delay: 0.2s; }
+    .wave-bar:nth-child(3) { animation-delay: 0.4s; }
+    .wave-bar:nth-child(4) { animation-delay: 0.6s; }
+    .wave-bar:nth-child(5) { animation-delay: 0.3s; }
+    @keyframes soundWave {
+      0%, 100% { height: 16px; background: rgba(255,255,255,0.4); }
+      50% { height: 50px; background: #ffffff; }
+    }
+
+    /* Live Object Detection & Desk Stage Grid */
+    .detection-live-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+    @media(max-width: 960px) {
+      .detection-live-grid { grid-template-columns: 1fr; }
+      .hero-voice-card { flex-direction: column; align-items: flex-start; }
+    }
+    .card-panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 1.8rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.2rem;
+    }
+    .panel-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #0284c7;
+    }
+    .status-badge.running { background: #dcfce7; color: #15803d; }
+    .status-badge.running .status-dot { background: #16a34a; }
+    .status-badge.paused { background: #fef3c7; color: #b45309; }
+    .status-badge.paused .status-dot { background: #f59e0b; }
+    .status-badge.error { background: #fee2e2; color: #b91c1c; }
+    .status-badge.error .status-dot { background: #ef4444; }
+
+    /* Camera viewport */
+    .cam-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #000000;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      margin-bottom: 1rem;
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+    }
+    video#dash-video, canvas#dash-canvas {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;
+    }
+    .cam-fallback-banner {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      text-align: center;
+      background: #18181b;
+      color: #ffffff;
+    }
+    .cam-fallback-banner h3 { margin-bottom: 6px; }
+    .cam-fallback-banner p { font-size: 0.9rem; color: #a1a1aa; margin-bottom: 1.2rem; }
+
+    .cam-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .btn-toggle-cam {
+      padding: 9px 18px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .narration-live-box {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-left: 4px solid var(--primary-blue);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-weight: 600;
+      font-size: 0.98rem;
+      color: var(--primary-blue);
+      flex: 1;
+    }
+
+    /* 2D Digital Twin Stage */
+    .twin-stage {
+      position: relative;
+      height: 240px;
+      background: #090d16;
+      border: 2px dashed #334155;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .twin-student {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #f8fafc;
+      padding: 5px 14px;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      border: 1px solid #475569;
+    }
+    .twin-desk-item {
+      position: absolute;
+      background: #2563eb;
+      color: #ffffff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 800;
+      border: 1px solid #60a5fa;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+      animation: popIn 200ms ease;
+    }
+    @keyframes popIn {
+      from { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+      to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    }
+
+    /* Quick Action Cards */
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+    @media(max-width: 800px) { .tools-grid { grid-template-columns: 1fr; } }
+    .tool-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 1.8rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: var(--shadow-sm);
+    }
+    .tool-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 1.2rem;
+    }
+    .tool-icon.blue { background: #dbeafe; color: #1d4ed8; }
+    .tool-icon.green { background: #dcfce7; color: #15803d; }
+    .tool-icon.purple { background: #f3e8ff; color: #7e22ce; }
+    .tool-card h3 { font-size: 1.25rem; font-weight: 800; margin-bottom: 6px; }
+    .tool-card p { font-size: 0.95rem; color: var(--text-muted); line-height: 1.4; margin-bottom: 1.5rem; }
+    .btn-tool {
+      width: 100%;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-weight: 800;
+      color: #ffffff;
+      font-size: 0.95rem;
+    }
+    .btn-tool.blue { background: var(--primary-blue); }
+    .btn-tool.green { background: var(--accent-green); }
+    .btn-tool.purple { background: var(--accent-purple); }
+
+    /* ============================================================
+       VIEW 2: STATISTICS
+       ============================================================ */
+    .stats-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    @media(max-width: 900px) { .stats-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    .kpi-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 1.8rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .kpi-badge {
+      width: 44px; height: 44px; border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center; font-size: 1.3rem; margin-bottom: 1rem;
+    }
+    .kpi-number {
+      font-size: 2.6rem;
+      font-weight: 800;
+      margin-bottom: 4px;
+      color: var(--text-main);
+    }
+    .kpi-label { font-weight: 700; font-size: 1.05rem; }
+    .kpi-desc { font-size: 0.85rem; color: var(--text-muted); margin-top: 2px; }
+
+    /* ============================================================
+       VIEW 3: RECENT ACTIVITY
+       ============================================================ */
+    .activity-list { display: flex; flex-direction: column; gap: 1rem; }
+    .activity-item {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.2rem 1.6rem;
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .act-icon {
+      width: 46px; height: 46px; border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0;
+    }
+    .act-body { flex: 1; }
+    .act-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 2px; }
+    .act-subtitle { font-size: 0.9rem; color: var(--text-muted); }
+    .act-time { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+
+    /* ============================================================
+       VIEW 4: SETTINGS (THEME: BLACK / WHITE MODE)
+       ============================================================ */
+    .settings-table {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .settings-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.4rem 2rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-info h4 { font-size: 1.1rem; font-weight: 700; margin-bottom: 3px; }
+    .settings-info p { font-size: 0.88rem; color: var(--text-muted); }
+
+    /* Theme radio group */
+    .theme-radio-group {
+      display: flex;
+      background: var(--bg-canvas);
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      gap: 4px;
+    }
+    .theme-radio-btn {
+      padding: 8px 18px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 700;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .theme-radio-btn.active {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Range & Select */
+    .apple-select {
+      padding: 8px 16px; border-radius: var(--radius-sm); border: 1.5px solid var(--border-subtle);
+      background: var(--bg-surface); color: var(--text-main); font-weight: 700; font-size: 0.95rem;
+    }
+
+    /* Modal Sheet */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+      z-index: 1000;
+      display: none; align-items: center; justify-content: center; padding: 1.5rem;
+    }
+    .modal-backdrop.active { display: flex; }
+    .modal-box {
+      background: var(--bg-surface); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg); width: 100%; max-width: 800px; padding: 2rem;
+      box-shadow: var(--shadow-lg); animation: popIn 200ms ease;
+    }
+    .modal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+    .btn-close-modal { background: var(--bg-canvas); border: none; width: 36px; height: 36px; border-radius: 50%; font-size: 1.2rem; }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== HEADER (NO SIDEBAR) ==================== -->
+  <header class="saas-header">
+    <div class="header-inner">
+      <div class="brand-group">
+        <div class="brand-badge">🎓</div>
+        <div class="brand-title">
+          AI Assistive Tutor
+          <span class="tag">Major Project</span>
+        </div>
+      </div>
+
+      <!-- Protected Navigation (Visible when logged in) -->
+      <nav id="header-nav-links" class="header-nav" style="display: none;">
+        <a href="#dashboard" class="nav-btn active" data-target="view-dashboard">Dashboard</a>
+        <a href="#statistics" class="nav-btn" data-target="view-statistics">Statistics</a>
+        <a href="#activity" class="nav-btn" data-target="view-activity">Recent Activity</a>
+        <a href="#settings" class="nav-btn" data-target="view-settings">Settings</a>
+        <a href="#about" class="nav-btn" data-target="view-about">About</a>
+      </nav>
+
+      <!-- Right Header Actions -->
+      <div class="header-actions">
+        <!-- Theme Toggle -->
+        <button id="quick-theme-btn" class="theme-toggle-btn" title="Toggle Black / White Mode">
+          <span id="theme-btn-icon">🌙</span>
+          <span id="theme-btn-label">Black Mode</span>
+        </button>
+
+        <!-- User Profile / Logout (Visible when logged in) -->
+        <div id="header-user-group" style="display: none; align-items: center; gap: 8px;">
+          <div class="user-pill">
+            <div id="user-avatar-char" class="user-avatar">S</div>
+            <span id="header-username">Student</span>
+          </div>
+          <button id="btn-logout-header" class="btn-logout">Sign Out</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== PHASE 1: AUTHENTICATION SCREEN ==================== -->
+  <section id="auth-view" class="active">
+    <div class="auth-card">
+      <h2>Welcome Back 👋</h2>
+      <p class="auth-sub">Sign in to access your assistive tutor, study history, and real-time detection.</p>
+
+      <div class="auth-tabs">
+        <button id="tab-login" class="auth-tab active">Sign In</button>
+        <button id="tab-register" class="auth-tab">Register</button>
+      </div>
+
+      <!-- Sign In Form -->
+      <form id="form-login">
+        <div class="form-group">
+          <label for="login-username">Username</label>
+          <input type="text" id="login-username" class="form-control" placeholder="e.g. student" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn-auth-submit">Sign In to Dashboard &rarr;</button>
+        <button type="button" id="btn-fill-demo" class="btn-auth-demo">⚡ One-Click Demo Student Sign In</button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" style="display: none;">
+        <div class="form-group">
+          <label for="reg-fullname">Full Name</label>
+          <input type="text" id="reg-fullname" class="form-control" placeholder="e.g. College Student" required>
+        </div>
+        <div class="form-group">
+          <label for="reg-username">Username</label>
+          <input type="text" id="reg-username" class="form-control" placeholder="e.g. student2" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="reg-password">Password (min 6 characters)</label>
+          <input type="password" id="reg-password" class="form-control" placeholder="••••••••" minlength="6" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-auth-submit">Create Account &rarr;</button>
+      </form>
+
+      <div id="auth-message" class="auth-msg"></div>
+    </div>
+  </section>
+
+  <!-- ==================== MAIN APPLICATION VIEWPORT ==================== -->
+  <main id="app-view" class="app-viewport">
+
+    <!-- 1. DASHBOARD -->
+    <div id="view-dashboard" class="view-pane active">
+      <div class="page-title-row">
+        <div class="greeting-pill">Assistive Workspace</div>
+        <h1 class="page-title">AI Assistive Learning Dashboard</h1>
+        <p class="page-subtitle">Voice-first multimodal study guidance with automatic object detection & digital twin.</p>
+      </div>
+
+      <!-- Hero Voice Card -->
+      <div class="hero-voice-card">
+        <div class="hero-info">
+          <h2 class="hero-title">Voice Assistant Operational</h2>
+          <p class="hero-desc">Ask anything verbally: read printed pages, ask academic questions, or inquire about objects on your desk.</p>
+          <div class="hero-actions">
+            <button id="hero-mic-btn" class="btn-hero-mic">
+              <span>🎙️</span>
+              <span id="hero-mic-label">Tap to Speak</span>
+            </button>
+            <div id="speech-transcript" class="speech-transcript-box">
+              Listening for: "Read page", "What's around me", or questions
+            </div>
+          </div>
+        </div>
+        <div class="sound-wave">
+          <div class="wave-bar"></div>
+          <div class="wave-bar"></div>
+          <div class="wave-bar"></div>
+          <div class="wave-bar"></div>
+          <div class="wave-bar"></div>
+        </div>
+      </div>
+
+      <!-- Automatic Detection + Digital Twin Live Grid -->
+      <div class="detection-live-grid">
+        <!-- Live Webcam Panel -->
+        <div class="card-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>📷</span>
+              Live Environmental Camera
+            </div>
+            <div id="cam-status-badge" class="status-badge running">
+              <span class="status-dot"></span>
+              <span id="cam-status-text">Detection Running</span>
+            </div>
+          </div>
+
+          <div class="cam-wrapper">
+            <video id="dash-video" autoplay playsinline muted></video>
+            <canvas id="dash-canvas"></canvas>
+            <div id="cam-fallback" class="cam-fallback-banner" style="display: none;">
+              <h3>Webcam Initializing...</h3>
+              <p>Please grant browser camera permissions to enable automatic object detection.</p>
+              <button id="btn-request-cam" class="btn-toggle-cam">Allow Camera Access</button>
+            </div>
+          </div>
+
+          <div class="cam-controls">
+            <div id="narration-box" class="narration-live-box">
+              Scanning environment...
+            </div>
+            <button id="btn-pause-detection" class="btn-toggle-cam">⏸️ Pause</button>
+          </div>
+        </div>
+
+        <!-- 2D Digital Twin Desk Stage -->
+        <div class="card-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>🪑</span>
+              Digital Twin (Desk Layout)
+            </div>
+            <span style="font-size: 0.85rem; color: var(--text-muted);">Spatial Coordinates</span>
+          </div>
+
+          <div id="twin-stage" class="twin-stage">
+            <div class="twin-student">🧑 Student Position</div>
+            <!-- Detections placed dynamically -->
+          </div>
+
+          <div style="background: var(--bg-canvas); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.88rem;">
+            <strong>Spatial Engine:</strong> Translates 2D FieldNet V3 bounding boxes into left, center, and right audio cues.
+          </div>
+        </div>
+      </div>
+
+      <!-- OCR Study Document Card -->
+      <div class="card-panel" style="margin-bottom: 2.5rem;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>📖</span>
+            Scanned Study Material (OCR)
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span id="ocr-blur-badge" class="status-badge" style="display: none; background: #fee2e2; color: #b91c1c;">⚠️ Slightly Blurry</span>
+            <span id="ocr-word-count" style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted);">0 words detected</span>
+          </div>
+        </div>
+
+        <div id="ocr-text-display" style="background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1.2rem; min-height: 90px; max-height: 220px; overflow-y: auto; font-family: inherit; font-size: 1.05rem; line-height: 1.6; white-space: pre-wrap; margin-bottom: 1.2rem; color: var(--text-main);">No textbook or notes scanned yet. Hold study material in front of the camera and click 'Read Text Aloud' or upload an image.</div>
+
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <button id="btn-ocr-speak" class="btn-toggle-cam" style="background: var(--accent-green); color: #fff; border: none;">🔊 Read Aloud</button>
+          <button id="btn-ocr-stop" class="btn-toggle-cam">⏹️ Stop Reading</button>
+          <button id="btn-ocr-ask-tutor" class="btn-toggle-cam" style="background: var(--accent-purple); color: #fff; border: none;">💡 Ask Tutor About This Text</button>
+          <label class="btn-toggle-cam" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            📁 Upload Image
+            <input type="file" id="input-ocr-file" accept="image/*" style="display: none;">
+          </label>
+        </div>
+      </div>
+
+      <!-- Quick Action Tools Grid -->
+      <div class="tools-grid">
+        <div class="tool-card">
+          <div>
+            <div class="tool-icon blue">🔍</div>
+            <h3>Scan Surroundings</h3>
+            <p>Runs FieldNet V3 inference on your current webcam view and speaks obstacle locations.</p>
+          </div>
+          <button id="btn-action-detect" class="btn-tool blue">Trigger Scan &gt;</button>
+        </div>
+
+        <div class="tool-card">
+          <div>
+            <div class="tool-icon green">📖</div>
+            <h3>Read Printed Book / Notes</h3>
+            <p>Captures study material, denoises with bilateral filters, and reads text aloud via Tesseract.</p>
+          </div>
+          <button id="btn-action-ocr" class="btn-tool green">Read Text Aloud &gt;</button>
+        </div>
+
+        <div class="tool-card">
+          <div>
+            <div class="tool-icon purple">💡</div>
+            <h3>Consult AI Academic Tutor</h3>
+            <p>Uses Google Gemini to explain difficult concepts or summarize scanned notes.</p>
+          </div>
+          <button id="btn-action-tutor" class="btn-tool purple">Ask Tutor &gt;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. STATISTICS -->
+    <div id="view-statistics" class="view-pane">
+      <div class="page-title-row" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px;">
+        <div>
+          <div class="greeting-pill">Performance Metrics</div>
+          <h1 class="page-title">Real-Time Study Analytics</h1>
+          <p class="page-subtitle">Aggregated from your verified SQLite database records.</p>
+        </div>
+        <button id="btn-refresh-stats" class="btn-toggle-cam" style="cursor: pointer;">🔄 Refresh Metrics</button>
+      </div>
+
+      <div class="stats-kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-badge" style="background: #dbeafe; color: #1d4ed8;">👁️</div>
+          <div id="kpi-detections" class="kpi-number">0</div>
+          <div class="kpi-label">Objects Identified</div>
+          <div class="kpi-desc">FieldNet V3 detections</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-badge" style="background: #dcfce7; color: #15803d;">📖</div>
+          <div id="kpi-ocr" class="kpi-number">0</div>
+          <div class="kpi-label">Pages Read</div>
+          <div class="kpi-desc">Tesseract OCR extractions</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-badge" style="background: #f3e8ff; color: #7e22ce;">🎙️</div>
+          <div id="kpi-qa" class="kpi-number">0</div>
+          <div class="kpi-label">Tutor Q&amp;A Sessions</div>
+          <div class="kpi-desc">Academic questions answered</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-badge" style="background: #fef3c7; color: #b45309;">📊</div>
+          <div id="kpi-actions" class="kpi-number">0</div>
+          <div class="kpi-label">Total Actions</div>
+          <div class="kpi-desc">Overall assistive interactions</div>
+        </div>
+      </div>
+
+      <div class="card-panel">
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin-bottom: 1rem;">Frequent Study Environment Objects</h3>
+        <div id="top-objects-list" style="display: flex; flex-direction: column; gap: 10px;">
+          <p style="color: var(--text-muted);">Loading real database statistics...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. RECENT ACTIVITY -->
+    <div id="view-activity" class="view-pane">
+      <div class="page-title-row" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px;">
+        <div>
+          <div class="greeting-pill">Audit Trail</div>
+          <h1 class="page-title">Recent Assistive Activity</h1>
+          <p class="page-subtitle">Historical log of detections, readings, and questions stored in your session.</p>
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button id="btn-refresh-activity" class="btn-toggle-cam" style="cursor: pointer;">🔄 Refresh</button>
+          <button id="btn-export-activity" class="btn-toggle-cam" style="cursor: pointer;">📥 Export JSON</button>
+          <button id="btn-clear-activity" class="btn-toggle-cam" style="cursor: pointer; color: var(--accent-red); border-color: rgba(239, 68, 68, 0.4);">🗑️ Clear Log</button>
+        </div>
+      </div>
+
+      <div id="activity-container" class="activity-list">
+        <p style="color: var(--text-muted);">Fetching activity history...</p>
+      </div>
+    </div>
+
+    <!-- 4. SETTINGS (THEME: BLACK / WHITE MODE) -->
+    <div id="view-settings" class="view-pane">
+      <div class="page-title-row">
+        <div class="greeting-pill">Preferences</div>
+        <h1 class="page-title">Accessibility &amp; System Settings</h1>
+        <p class="page-subtitle">Configure display themes, speech rates, and audio narration channels.</p>
+      </div>
+
+      <div class="settings-table">
+        <!-- Black Mode / White Mode Toggle -->
+        <div class="settings-row">
+          <div class="settings-info">
+            <h4>Color Theme</h4>
+            <p>Switch between White Mode (light) and Black Mode (high-contrast dark).</p>
+          </div>
+          <div class="theme-radio-group">
+            <button id="btn-theme-white" class="theme-radio-btn active">☀️ White Mode</button>
+            <button id="btn-theme-black" class="theme-radio-btn">🌙 Black Mode</button>
+          </div>
+        </div>
+
+        <!-- Font Size Scaling -->
+        <div class="settings-row">
+          <div class="settings-info">
+            <h4>Interface Text Size</h4>
+            <p>Scale typography dynamically for enhanced readability.</p>
+          </div>
+          <select id="select-font-size" class="apple-select">
+            <option value="16px">Default (16px)</option>
+            <option value="18px">Large (18px)</option>
+            <option value="20px">Extra Large (20px)</option>
+          </select>
+        </div>
+
+        <!-- Speech Rate -->
+        <div class="settings-row">
+          <div class="settings-info">
+            <h4>Speech Synthesis Rate</h4>
+            <p>Adjust the speed of audio feedback and book narration.</p>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input type="range" id="range-speech-rate" min="0.8" max="1.4" step="0.1" value="1.0" style="accent-color: var(--primary-blue);">
+            <span id="label-speech-rate" style="font-weight: 700; width: 60px;">1.0x</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. ABOUT -->
+    <div id="view-about" class="view-pane">
+      <div class="page-title-row">
+        <div class="greeting-pill">System Documentation</div>
+        <h1 class="page-title">About AI Assistive Tutor</h1>
+        <p class="page-subtitle">Multimodal Machine Learning Architecture for Inclusive Education.</p>
+      </div>
+
+      <div class="card-panel" style="line-height: 1.6;">
+        <h3 style="margin-bottom: 0.8rem;">Project Specifications:</h3>
+        <ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; color: var(--text-muted);">
+          <li><strong>Object Detection:</strong> FieldNet V3 (PyTorch, ResNet-34 backbone, 128 channels, 416x416 resolution, pre-trained on classroom dataset).</li>
+          <li><strong>Text Extraction:</strong> OpenCV preprocessing + Tesseract OCR Engine (PSM 3 segmentation).</li>
+          <li><strong>Spoken Audio Narration:</strong> Native macOS <code>say</code> utility + Web Speech API with fallback.</li>
+          <li><strong>Academic Tutoring:</strong> Google Generative AI (Gemini 1.5 Flash) with contextual textbook grounding.</li>
+          <li><strong>Session Persistence:</strong> SQLite with PBKDF2-HMAC password hashing and foreign-keyed audit logs.</li>
+        </ul>
+        <p><strong>Status:</strong> All backend pipelines operational and integrated.</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ==================== SCRIPT LOGIC ==================== -->
+  <script>
+    const API_BASE = (window.location.protocol.startsWith("http") && window.location.port === "8000")
+      ? window.location.origin
+      : "http://localhost:8000";
+
+    // Application State
+    let authToken = localStorage.getItem("tutor_token") || null;
+    let currentUser = null;
+    let currentTheme = localStorage.getItem("tutor_theme") || "white";
+    let isDetectionPaused = false;
+    let detectionInterval = null;
+    let streamActive = null;
+    let lastOcrContext = "";
+    let speechRate = parseFloat(localStorage.getItem("tutor_speech_rate") || "1.0");
+
+    // Elements
+    const authView = document.getElementById("auth-view");
+    const appView = document.getElementById("app-view");
+    const headerNavLinks = document.getElementById("header-nav-links");
+    const headerUserGroup = document.getElementById("header-user-group");
+    const headerUsername = document.getElementById("header-username");
+    const userAvatarChar = document.getElementById("user-avatar-char");
+    const authMessage = document.getElementById("auth-message");
+    const dashVideo = document.getElementById("dash-video");
+    const dashCanvas = document.getElementById("dash-canvas");
+    const dashCtx = dashCanvas.getContext("2d");
+    const camStatusBadge = document.getElementById("cam-status-badge");
+    const camStatusText = document.getElementById("cam-status-text");
+    const narrationBox = document.getElementById("narration-box");
+    const btnPause = document.getElementById("btn-pause-detection");
+    const twinStage = document.getElementById("twin-stage");
+    const heroMicBtn = document.getElementById("hero-mic-btn");
+    const speechTranscript = document.getElementById("speech-transcript");
+
+    // ==========================================
+    // THEME MANAGEMENT (PHASE 8: BLACK / WHITE)
+    // ==========================================
+    function applyTheme(theme) {
+      currentTheme = theme;
+      localStorage.setItem("tutor_theme", theme);
+      if (theme === "black") {
+        document.body.classList.add("theme-black");
+        document.getElementById("btn-theme-black").classList.add("active");
+        document.getElementById("btn-theme-white").classList.remove("active");
+        document.getElementById("theme-btn-icon").textContent = "☀️";
+        document.getElementById("theme-btn-label").textContent = "White Mode";
+      } else {
+        document.body.classList.remove("theme-black");
+        document.getElementById("btn-theme-white").classList.add("active");
+        document.getElementById("btn-theme-black").classList.remove("active");
+        document.getElementById("theme-btn-icon").textContent = "🌙";
+        document.getElementById("theme-btn-label").textContent = "Black Mode";
+      }
+    }
+    applyTheme(currentTheme);
+
+    document.getElementById("quick-theme-btn").addEventListener("click", () => {
+      applyTheme(currentTheme === "black" ? "white" : "black");
+    });
+    document.getElementById("btn-theme-white").addEventListener("click", () => applyTheme("white"));
+    document.getElementById("btn-theme-black").addEventListener("click", () => applyTheme("black"));
+
+    // ==========================================
+    // PHASE 1: AUTHENTICATION & SESSION HANDLING
+    // ==========================================
+    async function checkAuth() {
+      if (!authToken) {
+        showLogin();
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/profile`, {
+          headers: { "Authorization": `Bearer ${authToken}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          currentUser = data.user;
+          showApp();
+        } else {
+          logout();
+        }
+      } catch (err) {
+        console.warn("Auth check network error:", err);
+        showLogin();
+      }
+    }
+
+    function showLogin() {
+      authView.classList.add("active");
+      appView.classList.remove("active");
+      headerNavLinks.style.display = "none";
+      headerUserGroup.style.display = "none";
+      stopDetectionLoop();
+    }
+
+    function showApp() {
+      authView.classList.remove("active");
+      appView.classList.add("active");
+      headerNavLinks.style.display = "flex";
+      headerUserGroup.style.display = "flex";
+      headerUsername.textContent = currentUser ? currentUser.username : "Student";
+      userAvatarChar.textContent = currentUser ? currentUser.username[0].toUpperCase() : "S";
+
+      // Initialize Automatic Continuous Detection on Website Load (Phase 2)
+      startAutoDetection();
+      refreshStats();
+    }
+
+    // Login Form Submit
+    document.getElementById("form-login").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const u = document.getElementById("login-username").value.trim();
+      const p = document.getElementById("login-password").value;
+      authMessage.className = "auth-msg";
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        const data = await res.json();
+        if (res.ok && data.token) {
+          authToken = data.token;
+          currentUser = data.user;
+          localStorage.setItem("tutor_token", authToken);
+          authMessage.className = "auth-msg success";
+          authMessage.textContent = "Login successful! Opening dashboard...";
+          setTimeout(() => { authMessage.className = "auth-msg"; showApp(); }, 400);
+        } else {
+          authMessage.className = "auth-msg error";
+          authMessage.textContent = data.detail || "Invalid credentials.";
+        }
+      } catch (err) {
+        authMessage.className = "auth-msg error";
+        authMessage.textContent = "Server unreachable. Ensure FastAPI backend is running.";
+      }
+    });
+
+    // 1-Click Demo Fill
+    document.getElementById("btn-fill-demo").addEventListener("click", () => {
+      document.getElementById("login-username").value = "student";
+      document.getElementById("login-password").value = "student123";
+      document.getElementById("form-login").dispatchEvent(new Event("submit"));
+    });
+
+    // Register Form Submit
+    document.getElementById("form-register").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fn = document.getElementById("reg-fullname").value.trim();
+      const u = document.getElementById("reg-username").value.trim();
+      const p = document.getElementById("reg-password").value;
+      authMessage.className = "auth-msg";
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ full_name: fn, username: u, password: p })
+        });
+        const data = await res.json();
+        if (res.ok && data.token) {
+          authToken = data.token;
+          currentUser = data.user;
+          localStorage.setItem("tutor_token", authToken);
+          authMessage.className = "auth-msg success";
+          authMessage.textContent = "Account registered! Opening dashboard...";
+          setTimeout(() => { authMessage.className = "auth-msg"; showApp(); }, 400);
+        } else {
+          authMessage.className = "auth-msg error";
+          authMessage.textContent = data.detail || "Registration failed.";
+        }
+      } catch (err) {
+        authMessage.className = "auth-msg error";
+        authMessage.textContent = "Connection error. Please try again.";
+      }
+    });
+
+    // Auth Tabs Switcher
+    document.getElementById("tab-login").addEventListener("click", () => {
+      document.getElementById("tab-login").classList.add("active");
+      document.getElementById("tab-register").classList.remove("active");
+      document.getElementById("form-login").style.display = "block";
+      document.getElementById("form-register").style.display = "none";
+      authMessage.className = "auth-msg";
+    });
+    document.getElementById("tab-register").addEventListener("click", () => {
+      document.getElementById("tab-register").classList.add("active");
+      document.getElementById("tab-login").classList.remove("active");
+      document.getElementById("form-register").style.display = "block";
+      document.getElementById("form-login").style.display = "none";
+      authMessage.className = "auth-msg";
+    });
+
+    // Logout
+    async function logout() {
+      if (authToken) {
+        try {
+          await fetch(`${API_BASE}/api/auth/logout`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${authToken}` }
+          });
+        } catch (e) {}
+      }
+      authToken = null;
+      currentUser = null;
+      localStorage.removeItem("tutor_token");
+      showLogin();
+      speak("You have signed out.");
+    }
+    document.getElementById("btn-logout-header").addEventListener("click", logout);
+
+    // ==========================================
+    // NAVIGATION ROUTING
+    // ==========================================
+    const navButtons = document.querySelectorAll(".nav-btn");
+    const viewPanes = document.querySelectorAll(".view-pane");
+
+    navButtons.forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        navButtons.forEach(b => b.classList.remove("active"));
+        viewPanes.forEach(p => p.classList.remove("active"));
+        btn.classList.add("active");
+        const target = btn.getAttribute("data-target");
+        document.getElementById(target).classList.add("active");
+
+        if (target === "view-statistics") refreshStats();
+        if (target === "view-activity") refreshActivity();
+      });
+    });
+
+    // ==========================================
+    // PHASE 2: AUTOMATIC OBJECT DETECTION ON LOAD
+    // ==========================================
+    let currentStudySessionId = null;
+    let lastDetectedLabels = "";
+
+    function setDetectionStatus(state, customText = "") {
+      camStatusBadge.className = "status-badge " + state;
+      const dot = camStatusBadge.querySelector(".status-dot");
+      
+      const stateMap = {
+        "initializing": { text: "Initializing...", color: "#0284c7" },
+        "permission_required": { text: "Camera permission required", color: "#f59e0b" },
+        "ready": { text: "Camera ready", color: "#0284c7" },
+        "running": { text: "Detection running", color: "#16a34a" },
+        "paused": { text: "Detection paused", color: "#f59e0b" },
+        "error": { text: "Camera Error / Unavailable", color: "#ef4444" }
+      };
+
+      const info = stateMap[state] || { text: customText || state, color: "#64748b" };
+      dot.style.background = info.color;
+      camStatusText.textContent = customText || info.text;
+      camStatusBadge.setAttribute("aria-label", `Detection status: ${customText || info.text}`);
+    }
+
+    async function initStudySession() {
+      try {
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/api/session/start`, { method: "POST", headers });
+        if (res.ok) {
+          const data = await res.json();
+          currentStudySessionId = data.session_id;
+        }
+      } catch (e) {
+        console.warn("Could not create study session:", e);
+      }
+    }
+
+    async function startAutoDetection() {
+      if (streamActive) return; // Prevent duplicate camera streams
+      setDetectionStatus("initializing");
+      await initStudySession();
+
+      try {
+        setDetectionStatus("permission_required");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        streamActive = stream;
+        dashVideo.srcObject = stream;
+        document.getElementById("cam-fallback").style.display = "none";
+
+        setDetectionStatus("ready");
+
+        dashVideo.onloadedmetadata = () => {
+          dashCanvas.width = dashVideo.videoWidth || 640;
+          dashCanvas.height = dashVideo.videoHeight || 480;
+          setDetectionStatus("running");
+          speak("Camera ready. Automatic object detection is running.");
+
+          // Continuous detection throttled to every 1800ms
+          startContinuousLoop();
+        };
+      } catch (err) {
+        console.warn("Camera permission denied or unavailable:", err);
+        setDetectionStatus("error", "Camera Permission Denied");
+        document.getElementById("cam-fallback").style.display = "flex";
+        speak("Camera access was not granted. Tap allow camera access to enable detection.");
+      }
+    }
+
+    document.getElementById("btn-request-cam").addEventListener("click", startAutoDetection);
+
+    function startContinuousLoop() {
+      if (detectionInterval) clearInterval(detectionInterval);
+      detectionInterval = setInterval(() => {
+        if (!isDetectionPaused && streamActive && dashVideo.readyState >= 2) {
+          runDetectionCycle(false);
+        }
+      }, 1800);
+    }
+
+    function stopDetectionLoop() {
+      if (detectionInterval) {
+        clearInterval(detectionInterval);
+        detectionInterval = null;
+      }
+      if (streamActive) {
+        streamActive.getTracks().forEach(t => t.stop());
+        streamActive = null;
+      }
+      setDetectionStatus("paused", "Camera Offline");
+    }
+
+    function captureVideoBlob(quality = 0.85) {
+      return new Promise(resolve => {
+        const temp = document.createElement("canvas");
+        temp.width = dashVideo.videoWidth || 640;
+        temp.height = dashVideo.videoHeight || 480;
+        temp.getContext("2d").drawImage(dashVideo, 0, 0, temp.width, temp.height);
+        temp.toBlob(resolve, "image/jpeg", quality);
+      });
+    }
+
+    let isDetectingBusy = false;
+    let lastSpokenNarration = "";
+
+    async function runDetectionCycle(forceManual = false) {
+      if (isDetectingBusy) return;
+      isDetectingBusy = true;
+      try {
+        const blob = await captureVideoBlob();
+        const fd = new FormData();
+        fd.append("file", blob, "dash.jpg");
+        if (currentStudySessionId) fd.append("session_id", currentStudySessionId);
+
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+        const res = await fetch(`${API_BASE}/detect`, { method: "POST", headers, body: fd });
+        if (res.ok) {
+          const data = await res.json();
+          renderBoundingBoxes(data.detections || []);
+          renderDigitalTwinDesk(data.detections || []);
+          narrationBox.textContent = data.spatial_narration || "Area clear.";
+
+          // Track changes to prevent database flooding and speech spam
+          const currentLabels = (data.detections || []).map(d => d.label).sort().join(",");
+          const labelsChanged = currentLabels !== lastDetectedLabels;
+          lastDetectedLabels = currentLabels;
+
+          if ((forceManual || labelsChanged) && data.spatial_narration && !isDetectionPaused) {
+            lastSpokenNarration = data.spatial_narration;
+            speak(data.spatial_narration);
+          }
+        }
+      } catch (e) {
+        console.warn("Detection cycle error:", e);
+      } finally {
+        isDetectingBusy = false;
+      }
+    }
+
+    function togglePauseDetection() {
+      isDetectionPaused = !isDetectionPaused;
+      if (isDetectionPaused) {
+        btnPause.textContent = "▶️ Resume";
+        setDetectionStatus("paused");
+        speak("Object detection paused.");
+      } else {
+        btnPause.textContent = "⏸️ Pause";
+        setDetectionStatus("running");
+        speak("Object detection resumed.");
+      }
+    }
+
+    btnPause.addEventListener("click", togglePauseDetection);
+
+    // Keyboard Accessibility: Press 'P' key to pause/resume detection
+    window.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === "p" || e.key === "P") {
+        e.preventDefault();
+        togglePauseDetection();
+      }
+    });
+
+    function renderBoundingBoxes(detections) {
+      dashCtx.clearRect(0, 0, dashCanvas.width, dashCanvas.height);
+      dashCtx.lineWidth = 3;
+      dashCtx.strokeStyle = "#3b82f6";
+      dashCtx.fillStyle = "#3b82f6";
+      dashCtx.font = "bold 15px -apple-system, sans-serif";
+
+      detections.forEach(d => {
+        const [x1, y1, x2, y2] = d.box;
+        dashCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        dashCtx.fillText(`${d.label} (${Math.round(d.confidence * 100)}%)`, x1 + 6, Math.max(20, y1 - 6));
+      });
+    }
+
+    function renderDigitalTwinDesk(detections) {
+      twinStage.innerHTML = '<div class="twin-student">🧑 Student Position</div>';
+      detections.forEach(d => {
+        const el = document.createElement("div");
+        el.className = "twin-desk-item";
+        el.textContent = d.label;
+        let left = "50%";
+        if (d.position === "left") left = "20%";
+        if (d.position === "right") left = "80%";
+        el.style.left = left;
+        el.style.top = "42%";
+        twinStage.appendChild(el);
+      });
+    }
+
+    // ==========================================
+    // AUDIO & TTS OUTPUT
+    // ==========================================
+    function speak(text) {
+      if (!text || !text.trim()) return;
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const ut = new SpeechSynthesisUtterance(text);
+        ut.rate = speechRate || 1.0;
+        ut.pitch = 1.0;
+        ut.lang = "en-US";
+        ut.onerror = (e) => {
+          if (e.error !== "interrupted" && e.error !== "canceled") {
+            console.warn("TTS error:", e);
+          }
+        };
+        window.speechSynthesis.speak(ut);
+      }
+    }
+
+    // ==========================================
+    // ACTION BUTTONS (DASHBOARD)
+    // ==========================================
+    document.getElementById("btn-action-detect").addEventListener("click", () => {
+      speak("Scanning surroundings...");
+      runDetectionCycle(true);
+    });
+
+    // ==========================================
+    // PHASE 3: OCR ENGINE & STUDY MATERIAL READER
+    // ==========================================
+    const ocrTextDisplay = document.getElementById("ocr-text-display");
+    const ocrBlurBadge = document.getElementById("ocr-blur-badge");
+    const ocrWordCount = document.getElementById("ocr-word-count");
+    const btnOcrSpeak = document.getElementById("btn-ocr-speak");
+    const btnOcrStop = document.getElementById("btn-ocr-stop");
+    const btnOcrAskTutor = document.getElementById("btn-ocr-ask-tutor");
+    const inputOcrFile = document.getElementById("input-ocr-file");
+
+    async function performOcr(blob, sourceName = "webcam.jpg") {
+      ocrTextDisplay.textContent = "Analyzing document with OpenCV preprocessing and Tesseract OCR...";
+      narrationBox.textContent = "Processing study material with Tesseract OCR...";
+      if (ocrBlurBadge) ocrBlurBadge.style.display = "none";
+      if (ocrWordCount) ocrWordCount.textContent = "Scanning...";
+
+      const fd = new FormData();
+      fd.append("file", blob, sourceName);
+      if (currentStudySessionId) fd.append("session_id", currentStudySessionId);
+
+      const headers = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+      try {
+        const res = await fetch(`${API_BASE}/ocr`, { method: "POST", headers, body: fd });
+        if (!res.ok) throw new Error("OCR server error: " + res.status);
+        const data = await res.json();
+
+        lastOcrContext = (data.text || "").trim();
+        const wordCount = data.word_count || 0;
+        const isBlurry = !!data.is_blurry;
+        const isDark = !!data.is_dark;
+        const confidence = data.confidence_score || 0;
+
+        if (isBlurry) {
+          if (ocrBlurBadge) {
+            ocrBlurBadge.style.display = "inline-flex";
+            ocrBlurBadge.textContent = "⚠️ Slightly Blurry";
+          }
+        } else {
+          if (ocrBlurBadge) ocrBlurBadge.style.display = "none";
+        }
+
+        if (lastOcrContext) {
+          ocrTextDisplay.textContent = lastOcrContext;
+          if (ocrWordCount) ocrWordCount.textContent = `${wordCount} words detected (${confidence}% confidence)`;
+          narrationBox.textContent = `Scanned ${wordCount} words: "${lastOcrContext.length > 80 ? lastOcrContext.slice(0, 80) + '...' : lastOcrContext}"`;
+
+          if (isBlurry) {
+            speak("Text extracted with blur warning: " + lastOcrContext);
+          } else {
+            speak("Scanned page: " + lastOcrContext);
+          }
+        } else {
+          if (ocrWordCount) ocrWordCount.textContent = "0 words detected";
+          if (isBlurry) {
+            ocrTextDisplay.textContent = "The image is too blurry to extract text clearly. Please hold your study material steady and avoid motion.";
+            speak("Could not read text because the image is blurry. Please hold the book steady and try again.");
+          } else if (isDark) {
+            ocrTextDisplay.textContent = "The image is too dark for optical character recognition. Please ensure good lighting.";
+            speak("The image is too dark to read. Please improve lighting and try again.");
+          } else {
+            ocrTextDisplay.textContent = "No readable text detected. Please align your textbook or notes in front of the camera.";
+            speak("No readable text detected. Please reposition the study material.");
+          }
+        }
+
+        // Live refresh of analytics
+        refreshStats();
+        refreshActivity();
+      } catch (err) {
+        console.error("OCR extraction failed:", err);
+        ocrTextDisplay.textContent = "OCR processing failed. Please check network connection or try again.";
+        narrationBox.textContent = "OCR extraction error.";
+        speak("OCR extraction failed.");
+      }
+    }
+
+    document.getElementById("btn-action-ocr").addEventListener("click", async () => {
+      speak("Capturing study material for reading...");
+      if (!dashVideo.srcObject || dashVideo.videoWidth === 0) {
+        speak("Webcam is not active. Please allow camera access or upload an image.");
+        return;
+      }
+      const blob = await captureVideoBlob(0.95);
+      await performOcr(blob, "webcam_page.jpg");
+    });
+
+    if (btnOcrSpeak) {
+      btnOcrSpeak.addEventListener("click", () => {
+        if (lastOcrContext && lastOcrContext.trim()) {
+          speak("Reading scanned text: " + lastOcrContext);
+        } else {
+          speak("No scanned text available to read aloud. Please scan or upload a document first.");
+        }
+      });
+    }
+
+    if (btnOcrStop) {
+      btnOcrStop.addEventListener("click", () => {
+        if (window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+        narrationBox.textContent = "Reading stopped.";
+        speak("Reading stopped.");
+      });
+    }
+
+    if (btnOcrAskTutor) {
+      btnOcrAskTutor.addEventListener("click", () => {
+        if (!lastOcrContext || !lastOcrContext.trim()) {
+          speak("Please scan some study material first before asking the tutor about it.");
+          return;
+        }
+        const q = prompt("What would you like to ask your AI tutor about this scanned text?", "Explain and summarize the key concepts of this text.");
+        if (q) {
+          askTutorQuestion(q);
+        }
+      });
+    }
+
+    if (inputOcrFile) {
+      inputOcrFile.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        speak("Uploaded document image. Extracting text...");
+        await performOcr(file, file.name || "upload.jpg");
+        inputOcrFile.value = "";
+      });
+    }
+
+    document.getElementById("btn-action-tutor").addEventListener("click", () => {
+      const q = prompt("What academic question would you like to ask your AI tutor?");
+      if (q) {
+        askTutorQuestion(q);
+      }
+    });
+
+    async function askTutorQuestion(q) {
+      speak("Consulting AI academic tutor...");
+      speechTranscript.textContent = `Q: ${q}`;
+      const headers = { "Content-Type": "application/json" };
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+      try {
+        const res = await fetch(`${API_BASE}/ask`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            question: q,
+            context: lastOcrContext,
+            session_id: currentStudySessionId
+          })
+        });
+        const data = await res.json();
+        speechTranscript.textContent = `Tutor: ${data.answer}`;
+        speak(data.answer);
+        refreshStats();
+        refreshActivity();
+      } catch (e) {
+        speak("Could not reach academic tutor.");
+      }
+    }
+
+    // ==========================================
+    // VOICE ASSISTANT RECOGNITION (PHASE 4)
+    // ==========================================
+    async function processVoiceTranscript(transcript) {
+      if (!transcript || !transcript.trim()) return;
+      speechTranscript.textContent = `Heard: "${transcript}"`;
+
+      try {
+        const headers = { "Content-Type": "application/json" };
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+        const res = await fetch(`${API_BASE}/api/voice/process`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            transcript,
+            context: lastOcrContext,
+            session_id: currentStudySessionId
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          handleVoiceAction(data);
+        } else {
+          speak("Could not understand that command. Please try again.");
+        }
+      } catch (err) {
+        console.warn("Voice processing error:", err);
+        speak("Voice processing service unavailable.");
+      }
+    }
+
+    function handleVoiceAction(data) {
+      const action = data.action;
+
+      if (action === "trigger_ocr") {
+        document.getElementById("btn-action-ocr").click();
+      } else if (action === "trigger_detection") {
+        document.getElementById("btn-action-detect").click();
+      } else if (action === "pause_detection") {
+        if (!isDetectionPaused) togglePauseDetection();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        speak("Detection paused.");
+      } else if (action === "resume_detection") {
+        if (isDetectionPaused) togglePauseDetection();
+        speak("Detection resumed.");
+      } else if (action === "repeat_last") {
+        speak(lastSpokenNarration || "No previous announcement to repeat.");
+      } else if (action === "speak_help") {
+        speechTranscript.textContent = data.spoken_response;
+        speak(data.spoken_response);
+      } else if (action === "set_theme_black") {
+        applyTheme("black");
+        speak(data.spoken_response);
+      } else if (action === "set_theme_white") {
+        applyTheme("white");
+        speak(data.spoken_response);
+      } else if (action === "increase_speed") {
+        speechRate = Math.min(1.8, Math.round((speechRate + 0.2) * 10) / 10);
+        localStorage.setItem("tutor_speech_rate", speechRate);
+        const rangeEl = document.getElementById("range-speech-rate");
+        if (rangeEl) rangeEl.value = speechRate;
+        const lblEl = document.getElementById("label-speech-rate");
+        if (lblEl) lblEl.textContent = `${speechRate.toFixed(1)}x`;
+        speak(`Speech speed increased to ${speechRate.toFixed(1)} times normal.`);
+      } else if (action === "decrease_speed") {
+        speechRate = Math.max(0.6, Math.round((speechRate - 0.2) * 10) / 10);
+        localStorage.setItem("tutor_speech_rate", speechRate);
+        const rangeEl = document.getElementById("range-speech-rate");
+        if (rangeEl) rangeEl.value = speechRate;
+        const lblEl = document.getElementById("label-speech-rate");
+        if (lblEl) lblEl.textContent = `${speechRate.toFixed(1)}x`;
+        speak(`Speech speed decreased to ${speechRate.toFixed(1)} times normal.`);
+      } else if (action === "consult_tutor") {
+        const answer = data.tutor_answer || data.spoken_response;
+        speechTranscript.textContent = `Tutor: ${answer}`;
+        lastSpokenNarration = answer;
+        speak(answer);
+        refreshStats();
+        refreshActivity();
+      } else {
+        speechTranscript.textContent = data.spoken_response;
+        if (data.spoken_response) speak(data.spoken_response);
+      }
+    }
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let rec = null;
+    if (SpeechRec) {
+      rec = new SpeechRec();
+      rec.continuous = false;
+      rec.lang = "en-US";
+      rec.interimResults = false;
+
+      rec.onstart = () => {
+        heroMicBtn.classList.add("listening");
+        document.getElementById("hero-mic-label").textContent = "Listening...";
+        speechTranscript.textContent = "Listening to your voice command...";
+      };
+      rec.onend = () => {
+        heroMicBtn.classList.remove("listening");
+        document.getElementById("hero-mic-label").textContent = "Tap to Speak";
+      };
+      rec.onerror = (e) => {
+        console.warn("Speech recognition error:", e.error);
+        heroMicBtn.classList.remove("listening");
+        document.getElementById("hero-mic-label").textContent = "Tap to Speak";
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          speechTranscript.textContent = "Microphone access blocked. Click here or press 'V' to enter command.";
+          speak("Microphone access was blocked. Please enable microphone permissions in your browser.");
+        } else if (e.error === "no-speech") {
+          speechTranscript.textContent = "No speech detected. Tap microphone or press 'V' to try again.";
+        }
+      };
+      rec.onresult = (evt) => {
+        const transcript = evt.results[0][0].transcript;
+        processVoiceTranscript(transcript);
+      };
+
+      heroMicBtn.addEventListener("click", () => {
+        try {
+          rec.start();
+        } catch (e) {
+          try { rec.stop(); } catch (err) {}
+        }
+      });
+    } else {
+      heroMicBtn.addEventListener("click", () => {
+        const cmd = prompt("Voice recognition is not supported in this browser. Please type your voice command (e.g. 'Read page', 'What is around me', 'Explain photosynthesis'):");
+        if (cmd) {
+          processVoiceTranscript(cmd);
+        }
+      });
+    }
+
+    // Accessible hotkeys:
+    // 'V' = Voice command
+    // 'S' = Stop speech output
+    // 'R' = Repeat last narration
+    window.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      const k = e.key.toLowerCase();
+      if (k === "v") {
+        e.preventDefault();
+        if (rec) {
+          try { rec.start(); } catch (err) {
+            const cmd = prompt("Type your voice command:");
+            if (cmd) processVoiceTranscript(cmd);
+          }
+        } else {
+          const cmd = prompt("Type your voice command:");
+          if (cmd) processVoiceTranscript(cmd);
+        }
+      } else if (k === "s") {
+        e.preventDefault();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        speak("Speech stopped.");
+      } else if (k === "r") {
+        e.preventDefault();
+        speak(lastSpokenNarration || "No previous announcement to repeat.");
+      }
+    });
+
+    // ==========================================
+    // STATISTICS & ACTIVITY (PHASE 6 & 7)
+    // ==========================================
+    async function refreshStats() {
+      try {
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/api/statistics`, { headers });
+        if (res.ok) {
+          const stats = await res.json();
+          document.getElementById("kpi-detections").textContent = stats.detections_count;
+          document.getElementById("kpi-ocr").textContent = stats.ocr_count;
+          document.getElementById("kpi-qa").textContent = stats.qa_count;
+          document.getElementById("kpi-actions").textContent = stats.total_actions;
+
+          const topList = document.getElementById("top-objects-list");
+          if (stats.top_objects && stats.top_objects.length > 0) {
+            topList.innerHTML = stats.top_objects.map(o => `
+              <div style="display:flex; justify-content:space-between; padding:8px 12px; background:var(--bg-canvas); border-radius:6px; font-weight:700;">
+                <span>${o.label}</span>
+                <span style="color:var(--primary-blue);">${o.count} times</span>
+              </div>
+            `).join("");
+          } else {
+            topList.innerHTML = "<p style='color:var(--text-muted);'>No objects logged yet in your study sessions.</p>";
+          }
+        }
+      } catch (err) {
+        console.warn("Stats fetch error:", err);
+      }
+    }
+
+    async function refreshActivity() {
+      const container = document.getElementById("activity-container");
+      try {
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/history`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          const items = [];
+
+          (data.detections || []).forEach(d => {
+            items.push({
+              icon: "👁️",
+              bg: "#dbeafe",
+              color: "#1d4ed8",
+              title: `${d.label.replace('_',' ')} detected`,
+              desc: `Identified with ${Math.round(d.confidence * 100)}% confidence.`,
+              time: d.timestamp
+            });
+          });
+
+          (data.ocr_history || []).forEach(o => {
+            items.push({
+              icon: "📖",
+              bg: "#dcfce7",
+              color: "#15803d",
+              title: "Printed study material read",
+              desc: o.text ? `"${o.text.slice(0, 70)}..."` : "Empty/scanned frame",
+              time: o.timestamp
+            });
+          });
+
+          (data.qa_history || []).forEach(q => {
+            items.push({
+              icon: "🎙️",
+              bg: "#f3e8ff",
+              color: "#7e22ce",
+              title: `Tutor: "${q.question}"`,
+              desc: q.answer,
+              time: q.timestamp
+            });
+          });
+
+          items.sort((a,b) => new Date(b.time) - new Date(a.time));
+
+          if (items.length > 0) {
+            container.innerHTML = items.slice(0, 15).map(item => `
+              <div class="activity-item">
+                <div class="act-icon" style="background:${item.bg}; color:${item.color};">${item.icon}</div>
+                <div class="act-body">
+                  <div class="act-title">${item.title}</div>
+                  <div class="act-subtitle">${item.desc}</div>
+                </div>
+                <div class="act-time">${new Date(item.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+              </div>
+            `).join("");
+          } else {
+            container.innerHTML = "<p style='color:var(--text-muted);'>No recent activity logged yet.</p>";
+          }
+        }
+      } catch (err) {
+        container.innerHTML = "<p style='color:var(--accent-red);'>Failed to load activity log.</p>";
+      }
+    }
+
+    // ==========================================
+    // SETTINGS CONTROLS (PHASE 8)
+    // ==========================================
+    document.getElementById("select-font-size").addEventListener("change", (e) => {
+      document.documentElement.style.setProperty("--font-scale", e.target.value);
+    });
+
+    document.getElementById("range-speech-rate").addEventListener("input", (e) => {
+      speechRate = parseFloat(e.target.value);
+      localStorage.setItem("tutor_speech_rate", speechRate);
+      document.getElementById("label-speech-rate").textContent = `${speechRate.toFixed(1)}x`;
+    });
+
+    // Activity & Analytics Actions
+    document.getElementById("btn-refresh-stats").addEventListener("click", () => {
+      speak("Refreshing performance metrics.");
+      refreshStats();
+    });
+
+    document.getElementById("btn-refresh-activity").addEventListener("click", () => {
+      speak("Refreshing activity history.");
+      refreshActivity();
+    });
+
+    document.getElementById("btn-export-activity").addEventListener("click", async () => {
+      speak("Exporting study history.");
+      try {
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/history`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `assistive_study_log_${new Date().toISOString().slice(0, 10)}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          speak("Study history exported successfully.");
+        }
+      } catch (err) {
+        speak("Failed to export study history.");
+      }
+    });
+
+    document.getElementById("btn-clear-activity").addEventListener("click", async () => {
+      if (!confirm("Are you sure you want to clear your study activity history?")) return;
+      try {
+        const headers = {};
+        if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/api/history/clear`, { method: "POST", headers });
+        if (res.ok) {
+          speak("Activity history cleared.");
+          refreshActivity();
+          refreshStats();
+        }
+      } catch (err) {
+        speak("Could not clear activity history.");
+      }
+    });
+
+    // Start by checking authentication
+    checkAuth();
+  </script>
+</body>
+</html>
