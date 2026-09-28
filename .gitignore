@@ -33,3 +33,8 @@ Thumbs.db
 # Archives & Temp
 *.zip
 scratch/
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+.npm

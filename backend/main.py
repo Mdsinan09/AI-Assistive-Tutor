@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, status
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -358,7 +359,23 @@ async def health_check():
     }
 
 
-# Serve Frontend static directory
+# Serve Frontend static directory (Vite dist bundle with SPA fallback)
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
-if FRONTEND_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+DIST_DIR = FRONTEND_DIR / "dist"
+SERVE_DIR = DIST_DIR if DIST_DIR.is_dir() else FRONTEND_DIR
+
+if (SERVE_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=str(SERVE_DIR / "assets")), name="assets")
+
+if SERVE_DIR.is_dir():
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Serve exact file if exists
+        target = SERVE_DIR / full_path
+        if target.is_file():
+            return FileResponse(target)
+        # Serve SPA index.html for client-side routing
+        index_file = SERVE_DIR / "index.html"
+        if index_file.is_file():
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="File not found")
