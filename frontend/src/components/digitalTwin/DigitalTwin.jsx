@@ -25,8 +25,8 @@ export default function DigitalTwin({ detections = [], narration = "" }) {
   const renderZoneCard = (title, items, zoneKey, accentColor) => (
     <div
       style={{
-        flex: 1,
-        minWidth: "220px",
+        flex: "1 1 140px",
+        minWidth: "120px",
         backgroundColor: "var(--glass-bg-subtle)",
         border: `1px solid var(--glass-border-subtle)`,
         borderTop: `3px solid ${accentColor}`,

@@ -135,7 +135,15 @@ export default function AppShell() {
           zIndex: 10,
         }}
       >
-        <main style={{ padding: "2rem", maxWidth: "1400px", margin: "0 auto" }}>
+        <main
+          className="app-main-content"
+          style={{
+            maxWidth: "1400px",
+            margin: "0 auto",
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        >
           <Outlet />
         </main>
       </div>

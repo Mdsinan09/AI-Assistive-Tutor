@@ -9,14 +9,26 @@ export function VoiceProvider({ children }) {
   const [voiceState, setVoiceState] = useState("IDLE"); // IDLE, LISTENING, PROCESSING, SPEAKING, ERROR
   const [transcript, setTranscript] = useState("");
   const [lastAction, setLastAction] = useState(null);
+  const [lastSpokenResponse, setLastSpokenResponse] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isPromptOpen, setIsPromptOpen] = useState(false);
 
-  const { speak, stopSpeaking, repeatLast, isSpeaking } = useSpeechSynthesis();
+  const { speak: rawSpeak, stopSpeaking, repeatLast, isSpeaking } = useSpeechSynthesis();
   const { setTheme, setSpeechRate } = useAccessibility();
 
   const recognitionRef = useRef(null);
   const actionHandlersRef = useRef({});
+  const visualContextRef = useRef({});
+
+  // Wrapped speak that also tracks last spoken response
+  const speak = useCallback(
+    (text, priority = false) => {
+      if (!text) return;
+      setLastSpokenResponse(text);
+      rawSpeak(text, priority);
+    },
+    [rawSpeak]
+  );
 
   // Sync SPEAKING state with actual speech synthesis
   useEffect(() => {
@@ -27,7 +39,15 @@ export function VoiceProvider({ children }) {
     }
   }, [isSpeaking, voiceState]);
 
-  // Register external handlers (e.g. dashboard OCR, camera scan)
+  // Keep latest visual detection and OCR context
+  const updateVisualContext = useCallback((newContext) => {
+    visualContextRef.current = {
+      ...visualContextRef.current,
+      ...newContext,
+    };
+  }, []);
+
+  // Register external handlers (e.g. camera OCR, camera detection pause)
   const registerHandler = useCallback((name, fn) => {
     actionHandlersRef.current[name] = fn;
     return () => {
@@ -40,20 +60,28 @@ export function VoiceProvider({ children }) {
       const { action, spoken_response, tutor_answer } = actionData;
       setLastAction(action);
 
+      const reply = tutor_answer || spoken_response || "";
+      if (reply) {
+        setLastSpokenResponse(reply);
+      }
+
       switch (action) {
         case "trigger_ocr":
-          if (actionHandlersRef.current.triggerOcr) {
+          if (actionHandlersRef.current.triggerCameraOcr) {
+            actionHandlersRef.current.triggerCameraOcr();
+          } else if (actionHandlersRef.current.triggerOcr) {
             actionHandlersRef.current.triggerOcr();
           } else {
-            speak(spoken_response || "Scanning document.");
+            speak(spoken_response || "Scanning document text.");
           }
           break;
 
         case "trigger_detection":
-          if (actionHandlersRef.current.triggerDetection) {
+        case "describe_surroundings":
+          if (spoken_response) {
+            speak(spoken_response);
+          } else if (actionHandlersRef.current.triggerDetection) {
             actionHandlersRef.current.triggerDetection();
-          } else {
-            speak(spoken_response || "Scanning surroundings.");
           }
           break;
 
@@ -96,9 +124,15 @@ export function VoiceProvider({ children }) {
           speak(spoken_response || "Speech rate decreased.");
           break;
 
+        case "locate_object":
+        case "spatial_query":
+        case "explain_object":
+        case "explain_ocr":
+        case "summarize_ocr":
         case "consult_tutor":
-          const answer = tutor_answer || spoken_response || "I am analyzing your question.";
-          speak(answer);
+          if (reply) {
+            speak(reply);
+          }
           break;
 
         default:
@@ -112,15 +146,17 @@ export function VoiceProvider({ children }) {
   );
 
   const processTextCommand = useCallback(
-    async (text, context = "", sessionId = null) => {
+    async (text, explicitContext = null, sessionId = null) => {
       if (!text || !text.trim()) return;
       const clean = text.trim();
       setTranscript(clean);
       setVoiceState("PROCESSING");
       setErrorMessage("");
 
+      const effectiveContext = explicitContext || visualContextRef.current;
+
       try {
-        const res = await voiceApi.processCommand(clean, context, sessionId);
+        const res = await voiceApi.processCommand(clean, effectiveContext, sessionId);
         dispatchAction(res);
       } catch (err) {
         console.warn("Voice command error:", err.message);
@@ -132,23 +168,29 @@ export function VoiceProvider({ children }) {
     [dispatchAction, speak]
   );
 
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+    setVoiceState("IDLE");
+  }, []);
+
   const startListening = useCallback(
-    (context = "", sessionId = null) => {
+    (explicitContext = null, sessionId = null) => {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
       if (!SpeechRecognition) {
-        // Fallback for browsers without Web Speech Recognition API
         setIsPromptOpen(true);
         return;
       }
 
       if (voiceState === "LISTENING") {
-        try {
-          recognitionRef.current?.stop();
-        } catch {
-          // ignore
-        }
-        setVoiceState("IDLE");
+        stopListening();
         return;
       }
 
@@ -172,8 +214,8 @@ export function VoiceProvider({ children }) {
           console.warn("Speech recognition error:", event.error);
           setVoiceState("ERROR");
           if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-            setErrorMessage("Microphone access is blocked. Allow permission or type a command.");
-            speak("Microphone permission was denied. You can press V or tap here to enter a command.");
+            setErrorMessage("Microphone access is blocked. Allow permission or tap to type.");
+            speak("Microphone permission was denied. Tap here to enter a command.");
           } else if (event.error === "no-speech") {
             setErrorMessage("No speech was detected. Tap the mic to try again.");
           } else {
@@ -183,7 +225,8 @@ export function VoiceProvider({ children }) {
 
         recognition.onresult = (event) => {
           const spoken = event.results[0][0].transcript;
-          processTextCommand(spoken, context, sessionId);
+          const currentCtx = explicitContext || visualContextRef.current;
+          processTextCommand(spoken, currentCtx, sessionId);
         };
 
         recognitionRef.current = recognition;
@@ -193,20 +236,23 @@ export function VoiceProvider({ children }) {
         setIsPromptOpen(true);
       }
     },
-    [voiceState, stopSpeaking, speak, processTextCommand]
+    [voiceState, stopSpeaking, speak, stopListening, processTextCommand]
   );
 
   const value = {
     voiceState,
     transcript,
     lastAction,
+    lastSpokenResponse,
     errorMessage,
     startListening,
+    stopListening,
     processTextCommand,
     stopSpeaking,
     repeatLast,
     speak,
     registerHandler,
+    updateVisualContext,
     isPromptOpen,
     setIsPromptOpen,
   };

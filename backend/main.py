@@ -2,6 +2,7 @@
 # RUN COMMAND:
 # python3 -m uvicorn backend.main:app --reload --port 8000
 # ============================================================
+import json
 import cv2
 import numpy as np
 from pathlib import Path
@@ -86,13 +87,13 @@ class SpeakRequest(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
-    context: str = ""
+    context: str | dict | None = None
     session_id: int | None = None
 
 
 class VoiceProcessRequest(BaseModel):
     transcript: str
-    context: str = ""
+    context: str | dict | None = None
     session_id: int | None = None
 
 
@@ -287,12 +288,33 @@ async def process_voice_command(
     user = get_current_user_optional(authorization)
     user_id = user["id"] if user else None
 
-    routed = route_intent(req.transcript)
+    routed = route_intent(req.transcript, req.context)
     intent = routed["intent"]
 
-    if intent in ("ASK_TUTOR", "GENERAL_QUESTION"):
+    if intent in ("SUMMARIZE_OCR", "EXPLAIN_OCR"):
+        ctx_text = ""
+        if isinstance(req.context, dict):
+            ctx_text = req.context.get("ocr_text", "")
+        elif isinstance(req.context, str):
+            ctx_text = req.context
+
+        prompt = (
+            "Summarize this study text clearly in 2 to 3 concise sentences."
+            if intent == "SUMMARIZE_OCR"
+            else "Explain the core concepts and meaning of this study material clearly and concisely."
+        )
+        answer = await run_in_threadpool(tutor_svc.ask, ctx_text, prompt)
+        routed["tutor_answer"] = answer
+        routed["spoken_response"] = answer
+        session_id = req.session_id or create_session(user_id)
+        log_qa(session_id, req.transcript, answer, user_id=user_id)
+        digital_twin_state["last_tutor_qa"] = {"question": req.transcript, "answer": answer}
+        digital_twin_state["status"] = "tutoring"
+
+    elif intent in ("ASK_TUTOR", "GENERAL_QUESTION"):
         question = req.transcript
-        answer = await run_in_threadpool(tutor_svc.ask, req.context, question)
+        ctx_str = req.context if isinstance(req.context, str) else json.dumps(req.context) if req.context else ""
+        answer = await run_in_threadpool(tutor_svc.ask, ctx_str, question)
         session_id = req.session_id or create_session(user_id)
         log_qa(session_id, question, answer, user_id=user_id)
         routed["tutor_answer"] = answer

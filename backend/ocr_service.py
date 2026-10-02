@@ -150,6 +150,17 @@ class OCRService:
             except Exception:
                 pass
 
+        # Strategy 3 Fallback: PSM 6 (assume single uniform block of text)
+        if len(words) < 3:
+            try:
+                psm6_text = pytesseract.image_to_string(processed, config=r'--oem 3 --psm 6')
+                psm6_cleaned = self.clean_text(psm6_text)
+                if len(psm6_cleaned.split()) > len(words):
+                    cleaned = psm6_cleaned
+                    words = cleaned.split()
+            except Exception:
+                pass
+
         # Estimate confidence score based on word length and dictionary-like structure
         confidence = min(98, max(0, int(len(words) * 8.5))) if words else 0
 

@@ -1,49 +1,135 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useCamera } from "../../hooks/useCamera";
 import { detectionApi } from "../../api/detectionApi";
+import { ocrApi } from "../../api/ocrApi";
 import { useVoice } from "../../context/VoiceContext";
 import { useAccessibility } from "../../context/AccessibilityContext";
 import {
   Camera,
-  CameraOff,
   Play,
   Pause,
-  RefreshCw,
-  Eye,
+  SwitchCamera,
   Volume2,
   VolumeX,
-  AlertCircle,
+  AlertTriangle,
+  Lock,
   Cpu,
+  FileText,
+  Mic,
+  Copy,
+  Check,
+  RefreshCw,
 } from "lucide-react";
 import GlassButton from "../glass/GlassButton";
 
-export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = true }) {
-  const { videoRef, isActive, hasPermission, errorMessage: camError, startCamera, stopCamera, captureBlob } = useCamera();
-  const { speak, registerHandler } = useVoice();
-  const { announce } = useAccessibility();
+export default function LiveDetection({
+  onDetectionsUpdate,
+  onOcrCaptured,
+  initialAutoStart = true,
+}) {
+  const {
+    videoRef,
+    isActive,
+    isSwitching,
+    hasPermission,
+    facingMode,
+    errorMessage: camError,
+    errorType,
+    diagnostics,
+    startCamera,
+    stopCamera,
+    toggleFacingMode,
+    captureBlob,
+    captureFullFrame,
+  } = useCamera();
+
+  const {
+    voiceState,
+    startListening,
+    stopSpeaking,
+    speak,
+    registerHandler,
+    updateVisualContext,
+  } = useVoice();
+  const { announce, autoDetection } = useAccessibility();
 
   const canvasRef = useRef(null);
   const isBusyRef = useRef(false);
   const loopTimeoutRef = useRef(null);
-  const lastSpokenRef = useRef("");
+  const lastAnnouncedKeysRef = useRef("");
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   const [isPaused, setIsPaused] = useState(false);
   const [autoNarrate, setAutoNarrate] = useState(true);
   const [latency, setLatency] = useState(null);
   const [detections, setDetections] = useState([]);
   const [lastNarration, setLastNarration] = useState("");
-  const [scanCount, setScanCount] = useState(0);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
 
-  // Sync latest state to parent if callback provided
+  // Sync latest visual state to parent and VoiceContext
   useEffect(() => {
     if (onDetectionsUpdate) {
       onDetectionsUpdate({ detections, narration: lastNarration, latency });
     }
-  }, [detections, lastNarration, latency, onDetectionsUpdate]);
+    updateVisualContext({ objects: detections });
+  }, [detections, lastNarration, latency, onDetectionsUpdate, updateVisualContext]);
 
-  // Perform single frame detection
+  // Capture frame from the SAME camera for OCR
+  const captureOcrFromCamera = useCallback(async () => {
+    if (!isActive || isOcrProcessing) return;
+    setIsOcrProcessing(true);
+    stopSpeaking();
+    speak("Scanning text from camera view.");
+
+    try {
+      const blob = await captureFullFrame("image/jpeg", 0.92);
+      if (!blob) {
+        speak("Camera frame was not ready. Please try again.");
+        setIsOcrProcessing(false);
+        return;
+      }
+
+      const res = await ocrApi.extractText(blob, null, "camera_scan.jpg");
+      if (onOcrCaptured) {
+        onOcrCaptured(res);
+      }
+
+      if (res.text && res.text.trim()) {
+        const spokenStart = res.text.trim().slice(0, 140);
+        speak(`Scanned text says: ${spokenStart}`);
+      } else {
+        speak("I could not detect clear text on this page. Try holding the camera closer or adding light.");
+      }
+    } catch (err) {
+      console.warn("[LiveDetection] Camera OCR failed:", err);
+      speak("OCR scan encountered an error. Please try again.");
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  }, [isActive, isOcrProcessing, captureFullFrame, stopSpeaking, speak, onOcrCaptured]);
+
+  // Register external voice command handlers
+  useEffect(() => {
+    const unregisterOcr = registerHandler("triggerCameraOcr", captureOcrFromCamera);
+    const unregisterPause = registerHandler("pauseDetection", () => {
+      setIsPaused(true);
+      announce("Detection paused.");
+    });
+    const unregisterResume = registerHandler("resumeDetection", () => {
+      setIsPaused(false);
+      announce("Detection resumed.");
+    });
+
+    return () => {
+      unregisterOcr();
+      unregisterPause();
+      unregisterResume();
+    };
+  }, [registerHandler, captureOcrFromCamera, announce]);
+
+  // Continuous FieldNet V3 Detection Frame Processing
   const performDetection = useCallback(async () => {
-    if (isBusyRef.current || isPaused || !videoRef.current || !isActive) {
+    if (isBusyRef.current || isPaused || !videoRef.current || !isActive || isSwitching) {
       return;
     }
 
@@ -56,7 +142,8 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
     const startTime = performance.now();
 
     try {
-      const blob = await captureBlob("image/jpeg", 0.85);
+      // Scale frame down to ~640px for mobile performance without accuracy loss
+      const blob = await captureBlob("image/jpeg", 0.82, 640);
       if (!blob) {
         isBusyRef.current = false;
         return;
@@ -68,41 +155,52 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
 
       const items = res.detections || [];
       setDetections(items);
-      setScanCount((prev) => prev + 1);
 
       if (res.spatial_narration) {
         setLastNarration(res.spatial_narration);
 
-        // Auto-narrate if narration changed and audio enabled
-        if (autoNarrate && res.spatial_narration !== lastSpokenRef.current) {
-          lastSpokenRef.current = res.spatial_narration;
+        // Debounced TTS Announcements: only speak when the set of detected objects changes
+        const currentKeys = items
+          .map((i) => `${i.label}_${i.position}`)
+          .sort()
+          .join("|");
+
+        if (
+          autoNarrate &&
+          autoDetection &&
+          currentKeys !== lastAnnouncedKeysRef.current &&
+          items.length > 0
+        ) {
+          lastAnnouncedKeysRef.current = currentKeys;
           speak(res.spatial_narration);
           announce(res.spatial_narration);
+        } else if (items.length === 0 && lastAnnouncedKeysRef.current !== "") {
+          lastAnnouncedKeysRef.current = "";
         }
       }
     } catch (err) {
-      console.warn("Detection cycle failed:", err);
+      console.warn("[LiveDetection] Detection request failed:", err);
     } finally {
       isBusyRef.current = false;
     }
-  }, [isPaused, isActive, captureBlob, autoNarrate, speak, announce]);
+  }, [isPaused, isActive, isSwitching, captureBlob, autoNarrate, autoDetection, speak, announce]);
 
-  // Continuous Detection Loop (throttled ~1.4s)
+  // Continuous Detection Loop (throttled ~1.3s for mobile smoothness)
   useEffect(() => {
     let mounted = true;
 
-    async function tick() {
+    async function loop() {
       if (!mounted) return;
-      if (!isPaused && isActive) {
+      if (!isPaused && isActive && !isSwitching) {
         await performDetection();
       }
       if (mounted) {
-        loopTimeoutRef.current = setTimeout(tick, 1400);
+        loopTimeoutRef.current = setTimeout(loop, 1300);
       }
     }
 
-    if (isActive && !isPaused) {
-      loopTimeoutRef.current = setTimeout(tick, 600);
+    if (isActive && !isPaused && !isSwitching) {
+      loopTimeoutRef.current = setTimeout(loop, 400);
     }
 
     return () => {
@@ -111,9 +209,9 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
         clearTimeout(loopTimeoutRef.current);
       }
     };
-  }, [isActive, isPaused, performDetection]);
+  }, [isActive, isPaused, isSwitching, performDetection]);
 
-  // Auto-start camera on mount
+  // Auto-start camera on mount if requested
   useEffect(() => {
     if (initialAutoStart) {
       startCamera();
@@ -137,7 +235,7 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
     canvas.height = vHeight;
     ctx.clearRect(0, 0, vWidth, vHeight);
 
-    if (!detections || detections.length === 0) return;
+    if (!detections || detections.length === 0 || !isActive) return;
 
     detections.forEach((item) => {
       const [x1, y1, x2, y2] = item.box || [0, 0, 0, 0];
@@ -145,22 +243,20 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
       const height = y2 - y1;
       const label = `${item.label.replace(/_/g, " ")} ${(item.confidence * 100).toFixed(0)}%`;
 
-      // Zone-based color theme
       let strokeColor = "rgba(0, 113, 227, 0.9)"; // Apple Blue
-      let fillColor = "rgba(0, 113, 227, 0.15)";
-      let badgeBg = "rgba(0, 113, 227, 0.95)";
+      let fillColor = "rgba(0, 113, 227, 0.16)";
+      let badgeBg = "rgba(0, 113, 227, 0.92)";
 
       if (item.position === "left") {
         strokeColor = "rgba(16, 185, 129, 0.9)"; // Emerald
-        fillColor = "rgba(16, 185, 129, 0.15)";
-        badgeBg = "rgba(16, 185, 129, 0.95)";
+        fillColor = "rgba(16, 185, 129, 0.16)";
+        badgeBg = "rgba(16, 185, 129, 0.92)";
       } else if (item.position === "right") {
         strokeColor = "rgba(245, 158, 11, 0.9)"; // Amber
-        fillColor = "rgba(245, 158, 11, 0.15)";
-        badgeBg = "rgba(245, 158, 11, 0.95)";
+        fillColor = "rgba(245, 158, 11, 0.16)";
+        badgeBg = "rgba(245, 158, 11, 0.92)";
       }
 
-      // Draw rounded rectangle
       ctx.lineWidth = 3;
       ctx.strokeStyle = strokeColor;
       ctx.fillStyle = fillColor;
@@ -171,7 +267,7 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
       ctx.stroke();
       ctx.fill();
 
-      // Draw Glass Pill Badge for label
+      // Pill badge above box
       ctx.font = "bold 13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif";
       const textMetrics = ctx.measureText(label);
       const paddingH = 8;
@@ -187,139 +283,48 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
       ctx.fillStyle = "#ffffff";
       ctx.fillText(label, x1 + paddingH, badgeY + 15);
     });
-  }, [detections]);
+  }, [detections, isActive]);
 
-  // Voice Handlers registration (e.g. "pause detection", "resume detection")
-  useEffect(() => {
-    const unregister1 = registerHandler("pauseDetection", () => {
-      setIsPaused(true);
-      announce("Detection paused.");
-    });
-    const unregister2 = registerHandler("resumeDetection", () => {
-      setIsPaused(false);
-      announce("Detection resumed.");
-    });
-    const unregister3 = registerHandler("triggerDetection", () => {
-      performDetection();
-    });
+  const handleCopyHttpsUrl = () => {
+    const httpsUrl = `https://${window.location.hostname}:${window.location.port || "5173"}${window.location.pathname}`;
+    navigator.clipboard.writeText(httpsUrl);
+    setCopiedUrl(true);
+    setTimeout(() => setCopiedUrl(false), 2500);
+  };
 
-    return () => {
-      unregister1();
-      unregister2();
-      unregister3();
-    };
-  }, [registerHandler, announce, performDetection]);
+  const isListening = voiceState === "LISTENING";
+  const isSpeaking = voiceState === "SPEAKING";
+  const isProcessing = voiceState === "PROCESSING";
 
   return (
-    <div className="glass-panel" style={{ padding: "1.25rem", overflow: "hidden" }}>
-      {/* Top Header Controls Bar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "1rem",
-          flexWrap: "wrap",
-          gap: "0.75rem",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <div
-            style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "50%",
-              background: isActive ? "var(--accent-green-subtle)" : "var(--glass-bg-subtle)",
-              color: isActive ? "var(--accent-green)" : "var(--text-tertiary)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Eye size={18} />
-          </div>
-          <div>
-            <div style={{ fontWeight: 650, fontSize: "1.05rem", color: "var(--text-primary)" }}>
-              FieldNet V3 Spatial Vision
-            </div>
-            <div style={{ fontSize: "0.8rem", color: "var(--text-tertiary)" }}>
-              {isPaused ? "Paused" : isActive ? "Continuous Live Tracking" : "Camera Inactive"}
-            </div>
-          </div>
-        </div>
-
-        {/* Status Indicators & Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          {latency && (
-            <div
-              className="glass-pill"
-              title="Model inference latency"
-              style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "4px" }}
-            >
-              <Cpu size={12} />
-              <span>{latency} ms</span>
-            </div>
-          )}
-
-          <div
-            className={`glass-pill ${detections.length > 0 ? "primary" : ""}`}
-            style={{ fontSize: "0.75rem" }}
-          >
-            {detections.length} {detections.length === 1 ? "Object" : "Objects"}
-          </div>
-
-          {/* Toggle speech narration */}
-          <button
-            onClick={() => setAutoNarrate((prev) => !prev)}
-            aria-label={autoNarrate ? "Mute automatic spatial narration" : "Enable automatic spatial narration"}
-            className="glass-btn"
-            style={{ padding: "0.4rem 0.65rem", fontSize: "0.8rem" }}
-            title={autoNarrate ? "Auto-narration is ON" : "Auto-narration is MUTED"}
-          >
-            {autoNarrate ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          </button>
-
-          {/* Pause / Resume */}
-          {isActive && (
-            <GlassButton
-              variant={isPaused ? "primary" : "secondary"}
-              onClick={() => setIsPaused((prev) => !prev)}
-              aria-label={isPaused ? "Resume detection" : "Pause detection"}
-              style={{ padding: "0.4rem 0.85rem", fontSize: "0.85rem" }}
-            >
-              {isPaused ? <Play size={15} /> : <Pause size={15} />}
-              <span>{isPaused ? "Resume" : "Pause"}</span>
-            </GlassButton>
-          )}
-
-          {/* Camera On / Off */}
-          <GlassButton
-            variant={isActive ? "secondary" : "primary"}
-            onClick={isActive ? stopCamera : startCamera}
-            aria-label={isActive ? "Turn off webcam" : "Turn on webcam"}
-            style={{ padding: "0.4rem 0.85rem", fontSize: "0.85rem" }}
-          >
-            {isActive ? <CameraOff size={15} /> : <Camera size={15} />}
-            <span>{isActive ? "Stop" : "Start"}</span>
-          </GlassButton>
-        </div>
-      </div>
-
-      {/* Video Viewport & Canvas Overlay */}
+    <section
+      aria-label="Live Assistive Camera and Vision Interface"
+      className="glass-panel"
+      style={{
+        padding: "0.75rem",
+        borderRadius: "var(--radius-xl)",
+        position: "relative",
+        overflow: "hidden",
+        width: "100%",
+        boxShadow: "var(--shadow-elevation-medium)",
+      }}
+    >
+      {/* Viewport Frame */}
       <div
         style={{
           position: "relative",
           width: "100%",
-          aspectRatio: "16 / 9",
+          aspectRatio: "4 / 3",
+          maxHeight: "75vh",
           backgroundColor: "#000000",
-          borderRadius: "var(--radius-md)",
+          borderRadius: "var(--radius-lg)",
           overflow: "hidden",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: "inset 0 0 20px rgba(0, 0, 0, 0.6)",
         }}
       >
+        {/* Live Video Feed */}
         <video
           ref={videoRef}
           autoPlay
@@ -333,6 +338,7 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
           }}
         />
 
+        {/* Canvas Overlay for Bounding Boxes */}
         <canvas
           ref={canvasRef}
           style={{
@@ -346,102 +352,362 @@ export default function LiveDetection({ onDetectionsUpdate, initialAutoStart = t
           }}
         />
 
-        {/* Inactive or Error Overlay */}
+        {/* Floating Top Bar (Status + Flip) */}
+        {isActive && (
+          <div
+            style={{
+              position: "absolute",
+              top: "0.75rem",
+              left: "0.75rem",
+              right: "0.75rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              zIndex: 15,
+              pointerEvents: "none",
+            }}
+          >
+            {/* Live Indicator Pill */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                pointerEvents: "auto",
+              }}
+            >
+              <div
+                style={{
+                  background: "rgba(0, 0, 0, 0.65)",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  padding: "0.35rem 0.75rem",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  color: "#ffffff",
+                  fontSize: "0.78rem",
+                  fontWeight: 650,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    backgroundColor: isPaused ? "var(--accent-amber)" : "var(--accent-green)",
+                    boxShadow: isPaused
+                      ? "0 0 8px var(--accent-amber)"
+                      : "0 0 8px var(--accent-green)",
+                  }}
+                />
+                <span>{isPaused ? "PAUSED" : "LIVE"}</span>
+              </div>
+
+              <div
+                style={{
+                  background: "rgba(0, 0, 0, 0.65)",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  padding: "0.35rem 0.75rem",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  color: "#ffffff",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                }}
+              >
+                {detections.length} {detections.length === 1 ? "Object" : "Objects"}
+              </div>
+            </div>
+
+            {/* Camera Flip Button */}
+            <button
+              onClick={toggleFacingMode}
+              disabled={isSwitching}
+              aria-label={`Flip camera. Currently using ${facingMode === "environment" ? "back" : "front"} camera`}
+              style={{
+                pointerEvents: "auto",
+                background: "rgba(0, 0, 0, 0.65)",
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+                padding: "0.45rem 0.75rem",
+                borderRadius: "999px",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                color: "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                cursor: "pointer",
+                fontSize: "0.78rem",
+                fontWeight: 600,
+                transition: "transform var(--motion-fast)",
+              }}
+              title="Switch Front/Back camera"
+            >
+              <SwitchCamera size={15} className={isSwitching ? "animate-spin" : ""} />
+              <span>{facingMode === "environment" ? "Back" : "Front"}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Floating Bottom Bar (Mic, OCR, Narration, Pause) */}
+        {isActive && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "0.85rem",
+              left: "0.75rem",
+              right: "0.75rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              zIndex: 15,
+            }}
+          >
+            {/* Left Controls: OCR Trigger */}
+            <button
+              onClick={captureOcrFromCamera}
+              disabled={isOcrProcessing}
+              aria-label="Scan and read text from camera view"
+              style={{
+                background: "rgba(0, 0, 0, 0.7)",
+                backdropFilter: "blur(12px)",
+                WebkitBackdropFilter: "blur(12px)",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                color: "#ffffff",
+                borderRadius: "999px",
+                padding: "0.55rem 0.9rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "0.82rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+              title="Point camera at textbook and tap to read"
+            >
+              <FileText size={16} color="var(--accent-amber)" />
+              <span>{isOcrProcessing ? "Reading..." : "Read Text"}</span>
+            </button>
+
+            {/* Center: PRIMARY VOICE MICROPHONE BUTTON */}
+            <button
+              onClick={() => startListening()}
+              aria-label={
+                isListening
+                  ? "Stop listening"
+                  : isSpeaking
+                  ? "Speaking response aloud"
+                  : "Start voice assistant"
+              }
+              style={{
+                width: "60px",
+                height: "60px",
+                borderRadius: "50%",
+                background: isListening
+                  ? "var(--accent-primary)"
+                  : isSpeaking
+                  ? "var(--accent-green)"
+                  : isProcessing
+                  ? "var(--accent-amber)"
+                  : "rgba(255, 255, 255, 0.95)",
+                border: "3px solid rgba(255, 255, 255, 0.8)",
+                color: isListening || isSpeaking || isProcessing ? "#ffffff" : "#000000",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                boxShadow: isListening
+                  ? "0 0 25px var(--accent-primary)"
+                  : isSpeaking
+                  ? "0 0 22px var(--accent-green)"
+                  : "0 4px 18px rgba(0, 0, 0, 0.4)",
+                transform: isListening ? "scale(1.08)" : "scale(1)",
+                transition: "all var(--motion-fast)",
+              }}
+              title="Tap to speak your question"
+            >
+              <Mic size={26} className={isListening ? "animate-pulse" : ""} />
+            </button>
+
+            {/* Right Controls: Mute + Pause */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <button
+                onClick={() => setAutoNarrate((prev) => !prev)}
+                aria-label={autoNarrate ? "Mute automatic speech" : "Enable speech narration"}
+                style={{
+                  background: "rgba(0, 0, 0, 0.7)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                  color: autoNarrate ? "#ffffff" : "var(--accent-rose)",
+                  borderRadius: "50%",
+                  width: "40px",
+                  height: "40px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+                title={autoNarrate ? "Audio narration active" : "Audio narration muted"}
+              >
+                {autoNarrate ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+
+              <button
+                onClick={() => setIsPaused((prev) => !prev)}
+                aria-label={isPaused ? "Resume detection" : "Pause detection"}
+                style={{
+                  background: "rgba(0, 0, 0, 0.7)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                  color: "#ffffff",
+                  borderRadius: "50%",
+                  width: "40px",
+                  height: "40px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+                title={isPaused ? "Resume live detection" : "Pause live detection"}
+              >
+                {isPaused ? <Play size={18} /> : <Pause size={18} />}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* INACTIVE / PERMISSION / DIAGNOSTIC OVERLAY */}
         {!isActive && (
           <div
             style={{
+              padding: "1.75rem",
+              textAlign: "center",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              justifyContent: "center",
-              gap: "0.75rem",
-              color: "var(--text-tertiary)",
-              padding: "1.5rem",
-              textAlign: "center",
+              gap: "1rem",
+              maxWidth: "520px",
             }}
           >
-            {camError ? (
+            {errorType === "INSECURE_CONTEXT" ? (
               <>
-                <AlertCircle size={36} color="var(--accent-rose)" />
-                <div style={{ color: "var(--accent-rose)", fontWeight: 600 }}>{camError}</div>
-                <GlassButton variant="primary" onClick={startCamera}>
-                  Try Again
+                <div
+                  style={{
+                    width: "56px",
+                    height: "56px",
+                    borderRadius: "50%",
+                    background: "rgba(245, 158, 11, 0.15)",
+                    color: "var(--accent-amber)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Lock size={28} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "1.15rem", fontWeight: 700, margin: "0 0 0.4rem 0", color: "#ffffff" }}>
+                    HTTPS Connection Required
+                  </h3>
+                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", lineHeight: 1.5, margin: 0 }}>
+                    Mobile browsers strictly block camera access over plain HTTP. Please switch to the secure HTTPS
+                    address to enable live camera detection.
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    backgroundColor: "rgba(255, 255, 255, 0.08)",
+                    padding: "0.6rem 0.85rem",
+                    borderRadius: "var(--radius-sm)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.82rem",
+                    color: "#ffffff",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  https://{window.location.hostname}:{window.location.port || "5173"}
+                </div>
+
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "center" }}>
+                  <GlassButton variant="secondary" onClick={handleCopyHttpsUrl}>
+                    {copiedUrl ? <Check size={16} color="var(--accent-green)" /> : <Copy size={16} />}
+                    <span>{copiedUrl ? "Copied Link" : "Copy HTTPS Link"}</span>
+                  </GlassButton>
+                  <GlassButton
+                    variant="primary"
+                    onClick={() => {
+                      window.location.href = `https://${window.location.hostname}:${window.location.port || "5173"}${window.location.pathname}`;
+                    }}
+                  >
+                    Switch to HTTPS Now
+                  </GlassButton>
+                </div>
+              </>
+            ) : camError ? (
+              <>
+                <AlertTriangle size={40} color="var(--accent-rose)" />
+                <div>
+                  <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: "0 0 0.35rem 0", color: "#ffffff" }}>
+                    Camera Access Needed
+                  </h3>
+                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", margin: 0 }}>
+                    {camError}
+                  </p>
+                </div>
+                <GlassButton variant="primary" onClick={() => startCamera()}>
+                  <RefreshCw size={16} />
+                  <span>Try Again</span>
                 </GlassButton>
               </>
             ) : (
               <>
-                <Camera size={44} strokeWidth={1.5} />
-                <div style={{ fontSize: "0.95rem" }}>Live video feed is currently disabled</div>
-                <GlassButton variant="primary" onClick={startCamera}>
-                  Enable Camera
+                <Camera size={44} color="var(--accent-primary)" strokeWidth={1.5} />
+                <div>
+                  <h3 style={{ fontSize: "1.2rem", fontWeight: 700, margin: "0 0 0.35rem 0", color: "#ffffff" }}>
+                    Live Camera Assistive Vision
+                  </h3>
+                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", margin: 0, lineHeight: 1.5 }}>
+                    Your camera acts as your assistive sensor for real-time FieldNet V3 object detection and textbook
+                    reading.
+                  </p>
+                </div>
+                <GlassButton variant="primary" onClick={() => startCamera()} style={{ padding: "0.75rem 1.75rem" }}>
+                  <Camera size={18} />
+                  <span>Enable Camera</span>
                 </GlassButton>
               </>
             )}
           </div>
         )}
-
-        {/* Paused Overlay Pill */}
-        {isActive && isPaused && (
-          <div
-            style={{
-              position: "absolute",
-              top: "1rem",
-              left: "1rem",
-              background: "rgba(0, 0, 0, 0.75)",
-              color: "#ffffff",
-              padding: "0.35rem 0.75rem",
-              borderRadius: "999px",
-              fontSize: "0.8rem",
-              fontWeight: 600,
-              letterSpacing: "0.03em",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              backdropFilter: "blur(6px)",
-            }}
-          >
-            <Pause size={13} />
-            <span>PAUSED</span>
-          </div>
-        )}
       </div>
 
-      {/* Spatial Narration Box */}
-      {lastNarration && (
+      {/* Latency & Hardware Stats Footer */}
+      {isActive && latency && (
         <div
           style={{
-            marginTop: "1rem",
-            padding: "0.85rem 1rem",
-            backgroundColor: "var(--glass-bg-subtle)",
-            border: "1px solid var(--glass-border-subtle)",
-            borderRadius: "var(--radius-md)",
             display: "flex",
-            alignItems: "flex-start",
-            gap: "0.75rem",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: "0.5rem",
+            padding: "0.25rem 0.5rem",
+            fontSize: "0.75rem",
+            color: "var(--text-tertiary)",
           }}
         >
-          <Volume2
-            size={18}
-            style={{ color: "var(--accent-primary)", marginTop: "2px", flexShrink: 0 }}
-          />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" }}>
-              Spatial Narration
-            </div>
-            <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", marginTop: "2px", lineHeight: 1.4 }}>
-              {lastNarration}
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <Cpu size={12} />
+            <span>FieldNet V3 Latency: {latency} ms</span>
           </div>
-          <button
-            onClick={() => speak(lastNarration)}
-            className="glass-btn"
-            style={{ padding: "0.3rem 0.6rem", fontSize: "0.75rem" }}
-            title="Read aloud"
-          >
-            Repeat
-          </button>
+          <div>Facing: {facingMode === "environment" ? "Back (World)" : "Front (User)"}</div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

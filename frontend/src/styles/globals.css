@@ -201,4 +201,14 @@ body.theme-black ::-webkit-scrollbar-thumb {
   .app-main-wrapper {
     margin-left: 0 !important;
   }
+  .app-main-content {
+    padding: calc(0.75rem + env(safe-area-inset-top, 0px))
+             calc(0.5rem + env(safe-area-inset-right, 0px))
+             calc(2rem + env(safe-area-inset-bottom, 0px))
+             calc(0.5rem + env(safe-area-inset-left, 0px)) !important;
+  }
+}
+
+.app-main-content {
+  padding: 1.75rem 2rem 3rem 2rem;
 }
