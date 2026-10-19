@@ -101,6 +101,32 @@ def init_db():
     )
     """)
 
+    # Tutor Conversations (Persistent chat history for /assistive-tutor)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS tutor_conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        title TEXT NOT NULL,
+        context_source TEXT NOT NULL,
+        context_text TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    """)
+
+    # Tutor Chat Messages
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS tutor_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES tutor_conversations(id) ON DELETE CASCADE
+    )
+    """)
+
     # Safe migrations for existing databases missing user_id
     for table in ["sessions", "detections", "ocr_history", "qa_history"]:
         cols = [r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -342,3 +368,142 @@ def get_statistics(user_id: int | None = None) -> dict:
         "total_actions": total_actions,
         "top_objects": top_objects
     }
+
+
+# ==========================================
+# TUTOR CONVERSATIONS & CHAT HISTORY (SECTIONS 25-28)
+# ==========================================
+
+def create_tutor_conversation(
+    user_id: int | None,
+    title: str = "New Conversation",
+    context_source: str = "none",
+    context_text: str = "",
+) -> dict:
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute(
+        """
+        INSERT INTO tutor_conversations (user_id, title, context_source, context_text, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, title, context_source, context_text, now, now),
+    )
+    conv_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return {
+        "id": conv_id,
+        "user_id": user_id,
+        "title": title,
+        "context_source": context_source,
+        "context_text": context_text,
+        "created_at": now,
+        "updated_at": now,
+        "messages": [],
+    }
+
+
+def list_tutor_conversations(user_id: int | None = None, limit: int = 30) -> list[dict]:
+    conn = get_connection()
+    c = conn.cursor()
+    if user_id:
+        rows = c.execute(
+            """
+            SELECT * FROM tutor_conversations
+            WHERE user_id = ? OR user_id IS NULL
+            ORDER BY updated_at DESC LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    else:
+        rows = c.execute(
+            """
+            SELECT * FROM tutor_conversations
+            ORDER BY updated_at DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    conversations = [dict(r) for r in rows]
+    conn.close()
+    return conversations
+
+
+def get_tutor_conversation(conv_id: int, user_id: int | None = None) -> dict | None:
+    conn = get_connection()
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT * FROM tutor_conversations WHERE id = ?", (conv_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    conv = dict(row)
+    # Fetch all associated messages in chronological order
+    msg_rows = c.execute(
+        """
+        SELECT id, conversation_id, role, content, created_at
+        FROM tutor_messages
+        WHERE conversation_id = ?
+        ORDER BY id ASC
+        """,
+        (conv_id,),
+    ).fetchall()
+    conv["messages"] = [dict(m) for m in msg_rows]
+    conn.close()
+    return conv
+
+
+def add_tutor_message(conv_id: int, role: str, content: str) -> dict:
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute(
+        """
+        INSERT INTO tutor_messages (conversation_id, role, content, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (conv_id, role, content, now),
+    )
+    msg_id = c.lastrowid
+    # Update conversation updated_at
+    c.execute(
+        "UPDATE tutor_conversations SET updated_at = ? WHERE id = ?",
+        (now, conv_id),
+    )
+    conn.commit()
+    conn.close()
+    return {
+        "id": msg_id,
+        "conversation_id": conv_id,
+        "role": role,
+        "content": content,
+        "created_at": now,
+    }
+
+
+def update_tutor_conversation_title(conv_id: int, title: str) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE tutor_conversations SET title = ?, updated_at = ? WHERE id = ?",
+        (title.strip(), datetime.now().isoformat(), conv_id),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_tutor_conversation(conv_id: int, user_id: int | None = None) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM tutor_messages WHERE conversation_id = ?", (conv_id,))
+    c.execute("DELETE FROM tutor_conversations WHERE id = ?", (conv_id,))
+    conn.commit()
+    conn.close()
+    return True
+

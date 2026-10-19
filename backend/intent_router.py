@@ -17,25 +17,71 @@ OBJECT_EXPLANATIONS = {
     "pen": "A writing instrument used for taking handwritten notes or completing written exams.",
 }
 
+# Known recognizable brands for visual/OCR cross-referencing
+KNOWN_BRANDS = [
+    "pilot", "bic", "parker", "camlin", "reynolds", "classmate", "uniball", "faber castell",
+    "apple", "dell", "hp", "lenovo", "asus", "acer", "samsung", "logitech",
+    "milton", "tupperware", "nike", "adidas", "casio", "sony", "boat", "noise"
+]
+
+ORDINAL_MAP = {
+    "first": 1, "1st": 1,
+    "second": 2, "2nd": 2,
+    "third": 3, "3rd": 3,
+    "fourth": 4, "4th": 4,
+    "fifth": 5, "5th": 5,
+    "sixth": 6, "6th": 6,
+    "last": -1,
+}
+
 
 def parse_context(context_raw) -> dict:
     if isinstance(context_raw, dict):
         return context_raw
     if isinstance(context_raw, str) and context_raw.strip():
         try:
-            return json.loads(context_raw)
+            parsed = json.loads(context_raw)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"text": str(parsed), "ocr_text": str(parsed)}
         except Exception:
-            return {"text": context_raw}
+            return {"text": context_raw, "ocr_text": context_raw}
     return {}
+
+
+def split_paragraphs(text: str) -> list[str]:
+    """Split text into distinct non-empty paragraphs."""
+    if not text:
+        return []
+    # Split on double newlines or distinct multi-space paragraph breaks
+    raw_paras = re.split(r'\n\s*\n+', text.strip())
+    paras = [p.strip() for p in raw_paras if len(p.strip()) > 5]
+    if len(paras) <= 1 and len(text.strip()) > 100:
+        # If no double newline, group sentences into paragraphs
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text.strip()) if s.strip()]
+        if len(sentences) >= 4:
+            paras = [
+                " ".join(sentences[:len(sentences)//2]),
+                " ".join(sentences[len(sentences)//2:])
+            ]
+    return paras or ([text.strip()] if text.strip() else [])
 
 
 def format_spatial_description(objects: list) -> str:
     if not objects:
         return "I don't see any supported objects clearly in front of you right now."
 
-    left = [o["label"].replace("_", " ") for o in objects if o.get("position") == "left"]
-    center = [o["label"].replace("_", " ") for o in objects if o.get("position") == "center"]
-    right = [o["label"].replace("_", " ") for o in objects if o.get("position") == "right"]
+    def desc_item(o):
+        lbl = o.get("label", "object").replace("_", " ")
+        conf = o.get("confidence")
+        if conf is not None:
+            pct = int(conf * 100) if conf <= 1.0 else int(conf)
+            return f"a {lbl} ({pct}% confidence)"
+        return f"a {lbl}"
+
+    left = [desc_item(o) for o in objects if o.get("position") == "left"]
+    center = [desc_item(o) for o in objects if o.get("position") == "center"]
+    right = [desc_item(o) for o in objects if o.get("position") == "right"]
 
     parts = []
     if left:
@@ -46,22 +92,22 @@ def format_spatial_description(objects: list) -> str:
         parts.append(f"{', '.join(right)} on your right")
 
     if not parts:
-        names = [o["label"].replace("_", " ") for o in objects]
-        return f"I can see {', '.join(names)} in front of you."
+        items = [desc_item(o) for o in objects]
+        return f"I can see {', '.join(items)} in front of you."
 
     if len(parts) == 1:
-        return f"I can see a {parts[0]}."
+        return f"I can see {parts[0]}."
     if len(parts) == 2:
-        return f"I can see a {parts[0]}, and a {parts[1]}."
-    return f"I can see a {parts[0]}, a {parts[1]}, and a {parts[2]}."
+        return f"I can see {parts[0]}, and {parts[1]}."
+    return f"I can see {parts[0]}, {parts[1]}, and {parts[2]}."
 
 
 def route_intent(text: str, context: dict | str = None) -> dict:
     raw = (text or "").strip()
     cmd = raw.lower()
     ctx = parse_context(context)
-    objects = ctx.get("objects", []) or []
-    ocr_text = ctx.get("ocr_text", "") or ""
+    objects = ctx.get("objects") or ctx.get("detections") or ctx.get("last_detections") or []
+    ocr_text = ctx.get("ocr_text", "") or ctx.get("text", "") or ctx.get("last_ocr_text", "") or ""
 
     if not cmd:
         return {
@@ -110,6 +156,42 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": None,
         }
 
+    # 2.5 CAMERA FLIP Intent
+    if matches_any([
+        "flip camera", "switch camera", "change camera", "front camera",
+        "back camera", "turn camera", "switch to front camera", "switch to back camera",
+        "toggle camera", "reverse camera", "flip the camera"
+    ]):
+        return {
+            "intent": "FLIP_CAMERA",
+            "action": "flip_camera",
+            "spoken_response": "Switching camera view.",
+            "payload": None,
+        }
+
+    # 2.8 NAVIGATION Intent
+    if matches_any([
+        "open assistive tutor", "open tutor", "go to tutor", "switch to tutor",
+        "take me to tutor", "start tutoring", "open ai tutor"
+    ]):
+        return {
+            "intent": "NAVIGATION_QUERY",
+            "action": "navigate_tutor",
+            "spoken_response": "Opening Assistive Tutor.",
+            "payload": "/assistive-tutor",
+        }
+
+    if matches_any([
+        "open dashboard", "go to dashboard", "take me to dashboard",
+        "open camera", "back to camera"
+    ]):
+        return {
+            "intent": "NAVIGATION_QUERY",
+            "action": "navigate_dashboard",
+            "spoken_response": "Opening Dashboard.",
+            "payload": "/dashboard",
+        }
+
     # 3. REPEAT Intent
     if matches_any([
         "repeat", "repeat that", "say that again", "say it again",
@@ -123,31 +205,143 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": None,
         }
 
-    # 4. OCR / READ THIS Intent
+    # 4. BRAND / COMPANY / MANUFACTURER INQUIRY (Evidence-based without hallucination)
+    brand_query = matches_any([
+        "what company", "who made", "what brand", "who manufactured",
+        "which company", "which brand", "maker of"
+    ])
+    if brand_query:
+        target_obj = None
+        for obj in objects:
+            lbl = obj.get("label", "").lower().replace("_", " ")
+            if lbl in cmd:
+                target_obj = lbl
+                break
+        if not target_obj and objects:
+            target_obj = objects[0].get("label", "object").replace("_", " ")
+
+        obj_label = target_obj or "item"
+
+        # Check if any brand name is visibly detected in OCR text
+        found_brand = None
+        ocr_lower = ocr_text.lower()
+        for brand in KNOWN_BRANDS:
+            if re.search(r'\b' + re.escape(brand) + r'\b', ocr_lower):
+                found_brand = brand.title()
+                break
+
+        if found_brand:
+            return {
+                "intent": "BRAND_IDENTIFICATION",
+                "action": "brand_identified",
+                "spoken_response": f"Based on the visible label text '{found_brand}', this {obj_label} appears to be made by {found_brand}.",
+                "payload": {"brand": found_brand, "object": obj_label},
+            }
+        else:
+            return {
+                "intent": "BRAND_IDENTIFICATION",
+                "action": "brand_uncertain",
+                "spoken_response": f"I can see a {obj_label}, but the brand name or logo is not visible. Please hold it closer with the brand label facing the camera.",
+                "payload": {"object": obj_label, "status": "insufficient_evidence"},
+            }
+
+    # 5. PARAGRAPH SPECIFIC EXPLANATION ("Explain the second paragraph", "Read the 1st paragraph")
+    para_match = re.search(r"\b(explain|read|tell me about|summarize)\s+(?:the\s+)?(first|second|third|fourth|fifth|sixth|1st|2nd|3rd|4th|5th|6th|last)\s+paragraph\b", cmd)
+    if para_match:
+        ordinal_word = para_match.group(2).lower()
+        target_idx = ORDINAL_MAP.get(ordinal_word, 1)
+
+        if not ocr_text:
+            return {
+                "intent": "EXPLAIN_PARAGRAPH",
+                "action": "trigger_ocr",
+                "spoken_response": "I haven't scanned a document yet. Please point your camera at the text and say 'Read this'.",
+                "payload": None,
+            }
+
+        paragraphs = split_paragraphs(ocr_text)
+        if not paragraphs:
+            return {
+                "intent": "EXPLAIN_PARAGRAPH",
+                "action": "none",
+                "spoken_response": "No readable paragraphs were found in the scanned text. Please hold the document steady and scan again.",
+                "payload": None,
+            }
+
+        idx = len(paragraphs) - 1 if target_idx == -1 else target_idx - 1
+        if 0 <= idx < len(paragraphs):
+            selected_para = paragraphs[idx]
+            display_num = len(paragraphs) if target_idx == -1 else target_idx
+            return {
+                "intent": "EXPLAIN_PARAGRAPH",
+                "action": "explain_ocr",
+                "spoken_response": f"Analyzing paragraph {display_num}.",
+                "payload": selected_para,
+                "paragraph_index": display_num,
+            }
+        else:
+            return {
+                "intent": "EXPLAIN_PARAGRAPH",
+                "action": "none",
+                "spoken_response": f"The scanned document only has {len(paragraphs)} paragraph(s). Please ask for paragraph 1 through {len(paragraphs)}.",
+                "payload": None,
+            }
+
+    # 6. OCR / READ THIS / READ NOTEBOOK Intent
     if matches_any([
         "read this", "read page", "read the page", "read book", "read notes",
         "read text", "read document", "scan page", "scan text", "scan document",
         "what does this say", "what does it say", "tell me what this says",
         "what's written here", "whats written here", "can you read this",
-        "read aloud", "read"
+        "read aloud", "read", "read the text on my notebook", "read notebook",
+        "read my notebook", "read the text"
     ]):
+        spoken = "Capturing frame and reading text from your notebook." if "notebook" in cmd else "Capturing frame and reading text."
         return {
             "intent": "READ_PAGE",
             "action": "trigger_ocr",
-            "spoken_response": "Capturing frame and reading text.",
+            "spoken_response": spoken,
             "payload": raw,
         }
 
-    # 5. EXPLAIN / SUMMARIZE OCR CONTEXT Intent
+    # 7. QUESTIONS ABOUT PREVIOUSLY SCANNED TEXT ("Tell me about what I just scanned")
+    if matches_any([
+        "tell me about what i just scanned", "explain what i scanned",
+        "explain what i just scanned", "what did i just scan",
+        "tell me what i scanned", "explain scanned text", "what did you read"
+    ]):
+        if ocr_text:
+            return {
+                "intent": "EXPLAIN_OCR",
+                "action": "explain_ocr",
+                "spoken_response": "Analyzing what you just scanned.",
+                "payload": ocr_text,
+            }
+        else:
+            return {
+                "intent": "EXPLAIN_OCR",
+                "action": "trigger_ocr",
+                "spoken_response": "You haven't scanned a document yet. Please point your camera at your study notes and say 'Read this'.",
+                "payload": None,
+            }
+
+    # 8. EXPLAIN / SUMMARIZE OCR CONTEXT Intent
     if matches_any([
         "summarize this", "summarize that", "summarize the page", "summarize",
         "give me a summary", "brief summary", "summarize what you read"
     ]):
+        if ocr_text:
+            return {
+                "intent": "SUMMARIZE_OCR",
+                "action": "summarize_ocr",
+                "spoken_response": "Generating summary of captured text.",
+                "payload": ocr_text,
+            }
         return {
             "intent": "SUMMARIZE_OCR",
-            "action": "summarize_ocr",
-            "spoken_response": "Generating summary of captured text.",
-            "payload": ocr_text or raw,
+            "action": "trigger_ocr",
+            "spoken_response": "No document text is available to summarize. Please scan a page first.",
+            "payload": None,
         }
 
     if matches_any([
@@ -162,11 +356,10 @@ def route_intent(text: str, context: dict | str = None) -> dict:
                 "payload": ocr_text,
             }
 
-    # 6. "WHERE IS MY <OBJECT>?" / "IS THERE A <OBJECT>?" Query
+    # 9. "WHERE IS MY <OBJECT>?" / "IS THERE A <OBJECT>?" Query
     where_match = re.search(r"\b(?:where\s+is|where's|find|locate|do\s+i\s+have|is\s+there)\s+(?:a|an|my|the)?\s*([a-zA-Z_\s]+)\b", cmd)
     if where_match:
         target_name = where_match.group(1).strip()
-        # Find matching object in current visual detections
         matched_obj = None
         for obj in objects:
             lbl = obj.get("label", "").lower().replace("_", " ")
@@ -177,14 +370,17 @@ def route_intent(text: str, context: dict | str = None) -> dict:
         if matched_obj:
             pos = matched_obj.get("position", "in front of you")
             lbl_clean = matched_obj["label"].replace("_", " ")
+            conf = matched_obj.get("confidence")
+            conf_str = f" with {int(conf * 100)}% confidence" if conf else ""
+
             if pos == "left":
-                spoken = f"Your {lbl_clean} is slightly to your left."
+                spoken = f"Your {lbl_clean} is slightly to your left{conf_str}."
             elif pos == "right":
-                spoken = f"Your {lbl_clean} is slightly to your right."
+                spoken = f"Your {lbl_clean} is slightly to your right{conf_str}."
             elif pos == "center":
-                spoken = f"Your {lbl_clean} is right in the center of your view."
+                spoken = f"Your {lbl_clean} is right in the center of your view{conf_str}."
             else:
-                spoken = f"Your {lbl_clean} is {pos}."
+                spoken = f"Your {lbl_clean} is {pos}{conf_str}."
 
             return {
                 "intent": "LOCATE_OBJECT",
@@ -200,7 +396,7 @@ def route_intent(text: str, context: dict | str = None) -> dict:
                 "payload": None,
             }
 
-    # 7. "WHAT IS ON MY LEFT / RIGHT / CENTER?"
+    # 10. "WHAT IS ON MY LEFT / RIGHT / CENTER?"
     if "left" in tokens and ("what" in tokens or "anything" in tokens or "is there" in cmd):
         left_objs = [o["label"].replace("_", " ") for o in objects if o.get("position") == "left"]
         spoken = f"On your left, I see a {', '.join(left_objs)}." if left_objs else "Your left side looks clear."
@@ -221,7 +417,7 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": {"zone": "right", "objects": right_objs},
         }
 
-    # 8. "WHAT IS IN FRONT OF ME?" / "WHAT'S AROUND ME?" / "WHAT DO YOU SEE?"
+    # 11. "WHAT IS IN FRONT OF ME?" / "WHAT'S AROUND ME?" / "WHAT DO YOU SEE?"
     if matches_any([
         "what is in front of me", "what's in front of me", "whats in front of me",
         "what is on my desk", "what's on my desk", "whats on my desk",
@@ -238,9 +434,8 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": objects,
         }
 
-    # 9. "WHAT IS THIS USED FOR?" / "WHAT IS THIS THING?"
+    # 12. "WHAT IS THIS USED FOR?" / "WHAT IS THIS THING?"
     if matches_any(["what is this used for", "what is it used for", "how do i use this", "what is this"]):
-        # Check if pointing at an active OCR document
         if ocr_text and len(ocr_text.split()) > 3:
             first_words = " ".join(ocr_text.split()[:12])
             return {
@@ -250,7 +445,6 @@ def route_intent(text: str, context: dict | str = None) -> dict:
                 "payload": ocr_text,
             }
 
-        # Otherwise check the primary detected object (center or highest confidence)
         if objects:
             center_obj = next((o for o in objects if o.get("position") == "center"), objects[0])
             lbl_key = center_obj["label"].lower()
@@ -272,7 +466,7 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": None,
         }
 
-    # 10. SETTINGS / PREFERENCES
+    # 13. SETTINGS / PREFERENCES
     if matches_any(["black mode", "dark mode", "night mode", "dark theme"]):
         return {
             "intent": "SETTINGS",
@@ -305,10 +499,10 @@ def route_intent(text: str, context: dict | str = None) -> dict:
             "payload": {"delta": -0.2},
         }
 
-    # 11. GENERAL / ACADEMIC QUESTION (Fallback to Tutor Service)
+    # 14. GENERAL / ACADEMIC QUESTION (Fallback to Tutor Service)
     return {
         "intent": "GENERAL_QUESTION",
         "action": "consult_tutor",
-        "spoken_response": f"Looking into that for you.",
+        "spoken_response": "Looking into that for you.",
         "payload": raw,
     }

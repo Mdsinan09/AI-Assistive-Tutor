@@ -38,3 +38,8 @@ scratch/
 node_modules/
 frontend/node_modules/
 .npm
+frontend/.env
+
+# Tunnels & Binaries
+cloudflared
+*.tgz

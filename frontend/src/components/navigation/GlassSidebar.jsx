@@ -11,6 +11,7 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
+  Bot,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useVoice } from "../../context/VoiceContext";
@@ -27,6 +28,7 @@ export default function GlassSidebar({ isOpen, onClose }) {
 
   const navItems = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/assistive-tutor", label: "Assistive Tutor", icon: Bot },
     { to: "/statistics", label: "Statistics", icon: BarChart3 },
     { to: "/recent-activity", label: "Recent Activity", icon: History },
   ];

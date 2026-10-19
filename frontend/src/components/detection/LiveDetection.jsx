@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCamera } from "../../hooks/useCamera";
 import { detectionApi } from "../../api/detectionApi";
 import { ocrApi } from "../../api/ocrApi";
+import { tutorApi } from "../../api/tutorApi";
 import { useVoice } from "../../context/VoiceContext";
 import { useAccessibility } from "../../context/AccessibilityContext";
 import {
@@ -19,52 +21,255 @@ import {
   Copy,
   Check,
   RefreshCw,
+  Maximize2,
+  Minimize2,
+  Zap,
+  ZapOff,
+  ScanLine,
+  CheckSquare,
+  X,
+  Sparkles,
+  BookOpen,
+  ArrowRight,
+  Bot,
+  Plus,
+  Minus,
+  Loader2,
 } from "lucide-react";
 import GlassButton from "../glass/GlassButton";
+import VoiceWaveformOverlay from "../voice/VoiceWaveformOverlay";
+import {
+  mapDetectionToDisplayCoordinates,
+  TemporalBoxStabilizer,
+} from "../../utils/coordinateTransform";
 
 export default function LiveDetection({
   onDetectionsUpdate,
   onOcrCaptured,
   initialAutoStart = true,
 }) {
+  const navigate = useNavigate();
+
   const {
     videoRef,
     isActive,
     isSwitching,
     hasPermission,
     facingMode,
+    facingModeRef,
+    isTorchSupported,
+    isTorchOn,
+    toggleTorch,
     errorMessage: camError,
     errorType,
     diagnostics,
+    availableDevices,
     startCamera,
     stopCamera,
     toggleFacingMode,
     captureBlob,
     captureFullFrame,
+    zoom,
+    zoomRange,
+    isHardwareZoomSupported,
+    setZoomLevel,
+    zoomIn,
+    zoomOut,
+    resetZoom,
   } = useCamera();
 
   const {
     voiceState,
+    isVoiceSessionOpen,
+    transcript,
+    interimTranscript,
     startListening,
+    stopListening,
+    cancelListening,
+    closeVoiceSession,
     stopSpeaking,
     speak,
+    speakAnnouncement,
+    isSpeaking,
+    activeContextName,
     registerHandler,
     updateVisualContext,
   } = useVoice();
   const { announce, autoDetection } = useAccessibility();
 
+  const sectionRef = useRef(null);
+  const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const isBusyRef = useRef(false);
+  const isNativeFullscreenRef = useRef(false);
   const loopTimeoutRef = useRef(null);
   const lastAnnouncedKeysRef = useRef("");
-  const [copiedUrl, setCopiedUrl] = useState(false);
+  const stabilizerRef = useRef(new TemporalBoxStabilizer(0.65, 1200));
+  const frameSeqRef = useRef(0);
+  const latestCompletedSeqRef = useRef(0);
+  const lastFrameMetaRef = useRef({ width: 640, height: 360 });
+  const hasAutoStartedRef = useRef(false);
 
+  const [copiedUrl, setCopiedUrl] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [autoNarrate, setAutoNarrate] = useState(true);
+  const savedAutoNarrateRef = useRef(autoNarrate);
   const [latency, setLatency] = useState(null);
   const [detections, setDetections] = useState([]);
   const [lastNarration, setLastNarration] = useState("");
-  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [debugHudData, setDebugHudData] = useState(null);
+  const [torchNotice, setTorchNotice] = useState("");
+
+  // Task 2: Suspend automatic object-detection announcements when voice session is open
+  useEffect(() => {
+    if (isVoiceSessionOpen) {
+      savedAutoNarrateRef.current = autoNarrate;
+      stopSpeaking();
+    } else {
+      // When voice session closes (user clicked X), restore prior state and clear key history
+      // to avoid an immediate backlog burst of announcements
+      const confirmedObjects = stabilizerRef.current.getConfirmedDetections();
+      const currentKeys = confirmedObjects
+        .map((i) => `${i.label}_${i.position}`)
+        .sort()
+        .join("|");
+      lastAnnouncedKeysRef.current = currentKeys;
+    }
+  }, [isVoiceSessionOpen, stopSpeaking]);
+
+  // ==========================================
+  // GOOGLE LENS-STYLE OCR SCANNING & SELECTION (SECTIONS 8-20, 37-40)
+  // ==========================================
+  const [isOcrMode, setIsOcrMode] = useState(false);
+  const [isOcrScanning, setIsOcrScanning] = useState(false);
+  const [ocrData, setOcrData] = useState(null);
+  const [selectedWordIndices, setSelectedWordIndices] = useState(new Set());
+  const [selectedText, setSelectedText] = useState("");
+  const [ocrActionLoading, setOcrActionLoading] = useState(false);
+  const [ocrActionMessage, setOcrActionMessage] = useState("");
+  const [isCopiedSelected, setIsCopiedSelected] = useState(false);
+
+  const handleCopySelected = useCallback(() => {
+    if (!selectedText) return;
+    try {
+      navigator.clipboard?.writeText(selectedText);
+      setIsCopiedSelected(true);
+      setTimeout(() => setIsCopiedSelected(false), 2000);
+    } catch {}
+  }, [selectedText]);
+
+  const isMirrored = facingMode === "user";
+  const isDebug =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("debugVision") === "true";
+
+  // Helper to feature-detect active native fullscreen element across all browser engines
+  const getNativeFullscreenElement = () => {
+    return (
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement ||
+      null
+    );
+  };
+
+  // Toggle Fullscreen / Immersive Camera View with robust mobile & iOS fallback
+  const toggleFullscreen = useCallback(async (e) => {
+    if (e) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof e.stopPropagation === "function") e.stopPropagation();
+    }
+
+    const targetEl = sectionRef.current || containerRef.current;
+    if (!targetEl) return;
+
+    if (isFullscreen) {
+      // EXIT FULLSCREEN
+      if (isNativeFullscreenRef.current) {
+        try {
+          const exitFn =
+            document.exitFullscreen ||
+            document.webkitExitFullscreen ||
+            document.mozCancelFullScreen ||
+            document.msExitFullscreen;
+          if (exitFn && getNativeFullscreenElement()) {
+            await exitFn.call(document);
+          }
+        } catch (err) {
+          console.debug("[Fullscreen] Exit native notice:", err);
+        }
+        isNativeFullscreenRef.current = false;
+      }
+      setIsFullscreen(false);
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+    } else {
+      // ENTER FULLSCREEN
+      let enteredNative = false;
+      try {
+        const reqFn =
+          targetEl.requestFullscreen ||
+          targetEl.webkitRequestFullscreen ||
+          targetEl.mozRequestFullScreen ||
+          targetEl.msRequestFullscreen;
+        if (reqFn) {
+          await reqFn.call(targetEl);
+          enteredNative = true;
+          isNativeFullscreenRef.current = true;
+        }
+      } catch (err) {
+        console.debug("[Fullscreen] Native request rejected or unsupported, using CSS fallback:", err);
+        isNativeFullscreenRef.current = false;
+      }
+      setIsFullscreen(true);
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overflow = "hidden";
+    }
+  }, [isFullscreen]);
+
+  // Track native fullscreen exits (e.g. via Escape key or mobile gestures)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const nativeElement = getNativeFullscreenElement();
+      // Only reset if we entered native fullscreen mode
+      if (!nativeElement && isNativeFullscreenRef.current) {
+        isNativeFullscreenRef.current = false;
+        setIsFullscreen(false);
+        document.body.style.overflow = "";
+        document.documentElement.style.overflow = "";
+      }
+    };
+
+    const events = [
+      "fullscreenchange",
+      "webkitfullscreenchange",
+      "mozfullscreenchange",
+      "MSFullscreenChange",
+    ];
+    events.forEach((ev) => document.addEventListener(ev, handleFullscreenChange));
+
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && isFullscreen) {
+        toggleFullscreen(e);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      events.forEach((ev) => document.removeEventListener(ev, handleFullscreenChange));
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFullscreen, toggleFullscreen]);
+
+  // Clean up body overflow when component unmounts
+  useEffect(() => {
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+    };
+  }, []);
 
   // Sync latest visual state to parent and VoiceContext
   useEffect(() => {
@@ -72,45 +277,224 @@ export default function LiveDetection({
       onDetectionsUpdate({ detections, narration: lastNarration, latency });
     }
     updateVisualContext({ objects: detections });
+    try {
+      if (detections && detections.length > 0) {
+        const summary = detections.map((d) => d.class_name).join(", ");
+        sessionStorage.setItem("ai_assistive_active_detections", summary);
+      }
+    } catch (_) {}
   }, [detections, lastNarration, latency, onDetectionsUpdate, updateVisualContext]);
 
-  // Capture frame from the SAME camera for OCR
-  const captureOcrFromCamera = useCallback(async () => {
-    if (!isActive || isOcrProcessing) return;
-    setIsOcrProcessing(true);
+  // ==========================================
+  // TORCH / FLASHLIGHT HANDLER (SECTION 7 & 44)
+  // ==========================================
+  const handleToggleTorch = async () => {
+    const res = await toggleTorch();
+    if (!res.supported) {
+      setTorchNotice(res.message);
+      announce(res.message);
+      speak(res.message);
+      setTimeout(() => setTorchNotice(""), 3500);
+    } else if (res.success) {
+      announce(res.message);
+      speak(res.message);
+    }
+  };
+
+  // Camera Flip with Accessibility Announcement & Visual Feedback
+  const handleToggleCamera = useCallback(async () => {
+    if (isSwitching) return;
+    const prevMode = facingMode;
+    const ok = await toggleFacingMode();
+    const currentMode = facingModeRef?.current || (prevMode === "environment" ? "user" : "environment");
+    if (ok) {
+      const modeLabel = currentMode === "user" ? "Front camera" : "Back camera";
+      announce(`Switched to ${modeLabel}`);
+      speak(`${modeLabel} active`);
+    } else {
+      announce("Camera switch failed or device has only one camera.");
+      speak("Camera switch not supported or only one camera detected.");
+    }
+  }, [isSwitching, facingMode, toggleFacingMode, facingModeRef, announce, speak]);
+
+  // ==========================================
+  // OCR HIGH-RES SCAN & TEXT EXTRACTION (SECTIONS 8-12, 33-36)
+  // ==========================================
+  const startOcrScan = useCallback(async () => {
+    if (!isActive || isOcrScanning) return;
+    setIsOcrMode(true);
+    setIsOcrScanning(true);
+    setSelectedWordIndices(new Set());
+    setSelectedText("");
+    setOcrActionMessage("");
     stopSpeaking();
-    speak("Scanning text from camera view.");
+    speak("Scanning document text. Please hold the camera steady.");
+    announce("Scanning text from camera view.");
 
     try {
-      const blob = await captureFullFrame("image/jpeg", 0.92);
+      // Capture high-resolution native still frame (Section 10)
+      const blob = await captureFullFrame("image/jpeg", 0.94);
       if (!blob) {
         speak("Camera frame was not ready. Please try again.");
-        setIsOcrProcessing(false);
+        setIsOcrScanning(false);
         return;
       }
 
-      const res = await ocrApi.extractText(blob, null, "camera_scan.jpg");
+      const res = await ocrApi.extractText(blob, null, "lens_scan.jpg");
+      setOcrData(res);
+
       if (onOcrCaptured) {
-        onOcrCaptured(res);
+        onOcrCaptured(res, "");
       }
 
-      if (res.text && res.text.trim()) {
-        const spokenStart = res.text.trim().slice(0, 140);
-        speak(`Scanned text says: ${spokenStart}`);
+      if (res.words && res.words.length > 0) {
+        // Default: auto-select all text for instant accessibility
+        const allIndices = new Set(res.words.map((_, i) => i));
+        setSelectedWordIndices(allIndices);
+        const fullTxt = res.text || res.words.map((w) => w.text).join(" ");
+        setSelectedText(fullTxt);
+        speak(`Text detected: ${res.words.length} words found. Tap words to select, or use Read, Explain, or Ask Tutor.`);
       } else {
-        speak("I could not detect clear text on this page. Try holding the camera closer or adding light.");
+        const warn = res.quality_warning || "No clear text was detected. Try moving closer or turning on the flashlight.";
+        speak(warn);
       }
     } catch (err) {
-      console.warn("[LiveDetection] Camera OCR failed:", err);
-      speak("OCR scan encountered an error. Please try again.");
+      console.warn("[LiveDetection] High-res OCR scan failed:", err);
+      speak("Text scan encountered an error. Please try again.");
     } finally {
-      setIsOcrProcessing(false);
+      setIsOcrScanning(false);
     }
-  }, [isActive, isOcrProcessing, captureFullFrame, stopSpeaking, speak, onOcrCaptured]);
+  }, [isActive, isOcrScanning, captureFullFrame, stopSpeaking, speak, announce, onOcrCaptured]);
 
-  // Register external voice command handlers
+  // Exit OCR Text Mode back to Live Object Detection (Section 38 & 39)
+  const exitOcrMode = useCallback(() => {
+    setIsOcrMode(false);
+    setOcrData(null);
+    setSelectedWordIndices(new Set());
+    setSelectedText("");
+    setOcrActionMessage("");
+    speak("Returned to live object detection.");
+    announce("Returned to object detection mode.");
+  }, [speak, announce]);
+
+  // Quick Selection Controls (Section 14)
+  const handleSelectAll = useCallback(() => {
+    if (!ocrData || !ocrData.words) return;
+    const all = new Set(ocrData.words.map((_, i) => i));
+    setSelectedWordIndices(all);
+    const txt = ocrData.text || ocrData.words.map((w) => w.text).join(" ");
+    setSelectedText(txt);
+    speak("Selected entire document page.");
+    if (onOcrCaptured) onOcrCaptured(ocrData, txt);
+  }, [ocrData, speak, onOcrCaptured]);
+
+  const handleSelectParagraph = useCallback(() => {
+    if (!ocrData || !ocrData.words || ocrData.words.length === 0) return;
+    const targetParId = ocrData.words[0].paragraph_id || "p-1-1";
+    const parIndices = new Set();
+    const parWords = [];
+    ocrData.words.forEach((w, idx) => {
+      if (w.paragraph_id === targetParId) {
+        parIndices.add(idx);
+        parWords.push(w.text);
+      }
+    });
+    setSelectedWordIndices(parIndices);
+    const txt = parWords.join(" ");
+    setSelectedText(txt);
+    speak(`Selected paragraph: ${parWords.length} words.`);
+    if (onOcrCaptured) onOcrCaptured(ocrData, txt);
+  }, [ocrData, speak, onOcrCaptured]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedWordIndices(new Set());
+    setSelectedText("");
+    speak("Cleared text selection.");
+    if (onOcrCaptured) onOcrCaptured(ocrData, "");
+  }, [speak, onOcrCaptured, ocrData]);
+
+  // ==========================================
+  // OCR ACTION BAR COMMANDS: READ / EXPLAIN / SUMMARIZE / ASK TUTOR (SECTIONS 15-20)
+  // ==========================================
+  const handleReadSelected = useCallback(() => {
+    if (!selectedText || !selectedText.trim()) {
+      speak("Please select text on the page first.");
+      return;
+    }
+    stopSpeaking();
+    speak(selectedText);
+  }, [selectedText, stopSpeaking, speak]);
+
+  const handleExplainSelected = useCallback(async () => {
+    if (!selectedText || !selectedText.trim()) {
+      speak("Please select text to explain.");
+      return;
+    }
+    setOcrActionLoading(true);
+    setOcrActionMessage("Explaining selected text...");
+    stopSpeaking();
+    speak("Analyzing and explaining selected text.");
+
+    try {
+      const res = await tutorApi.explain(selectedText.trim());
+      const explanation = res.explanation || res.answer || "Explanation complete.";
+      setOcrActionMessage(explanation);
+      speak(explanation);
+    } catch {
+      const err = "Unable to connect to tutor explanation service.";
+      setOcrActionMessage(err);
+      speak(err);
+    } finally {
+      setOcrActionLoading(false);
+    }
+  }, [selectedText, stopSpeaking, speak]);
+
+  const handleSummarizeSelected = useCallback(async () => {
+    if (!selectedText || !selectedText.trim()) {
+      speak("Please select text to summarize.");
+      return;
+    }
+    setOcrActionLoading(true);
+    setOcrActionMessage("Summarizing selected text...");
+    stopSpeaking();
+
+    try {
+      const res = await tutorApi.summarize(selectedText.trim());
+      const summary = res.summary || res.answer || "Summary complete.";
+      setOcrActionMessage(summary);
+      speak(summary);
+    } catch {
+      const err = "Unable to connect to summary service.";
+      setOcrActionMessage(err);
+      speak(err);
+    } finally {
+      setOcrActionLoading(false);
+    }
+  }, [selectedText, stopSpeaking, speak]);
+
+  const handleAskTutorSelected = useCallback(() => {
+    if (!selectedText || !selectedText.trim()) {
+      speak("Opening Assistive Tutor.");
+      navigate("/assistive-tutor");
+      return;
+    }
+    speak("Opening Assistive Tutor with your selected study text.");
+    navigate("/assistive-tutor", {
+      state: {
+        initialContext: selectedText.trim(),
+        contextSource: "ocr",
+      },
+    });
+  }, [selectedText, speak, navigate]);
+
+  // Register external voice command handlers (Section 31 & 32)
   useEffect(() => {
-    const unregisterOcr = registerHandler("triggerCameraOcr", captureOcrFromCamera);
+    const unregisterOcr = registerHandler("triggerCameraOcr", startOcrScan);
+    const unregisterFlip = registerHandler("flipCamera", handleToggleCamera);
+    const unregisterFlash = registerHandler("toggleFlash", handleToggleTorch);
+    const unregisterExplain = registerHandler("explainOcr", handleExplainSelected);
+    const unregisterSummarize = registerHandler("summarizeOcr", handleSummarizeSelected);
+    const unregisterTutor = registerHandler("askTutor", handleAskTutorSelected);
     const unregisterPause = registerHandler("pauseDetection", () => {
       setIsPaused(true);
       announce("Detection paused.");
@@ -122,14 +506,28 @@ export default function LiveDetection({
 
     return () => {
       unregisterOcr();
+      unregisterFlip();
+      unregisterFlash();
+      unregisterExplain();
+      unregisterSummarize();
+      unregisterTutor();
       unregisterPause();
       unregisterResume();
     };
-  }, [registerHandler, captureOcrFromCamera, announce]);
+  }, [
+    registerHandler,
+    startOcrScan,
+    handleToggleCamera,
+    handleToggleTorch,
+    handleExplainSelected,
+    handleSummarizeSelected,
+    handleAskTutorSelected,
+    announce,
+  ]);
 
   // Continuous FieldNet V3 Detection Frame Processing
   const performDetection = useCallback(async () => {
-    if (isBusyRef.current || isPaused || !videoRef.current || !isActive || isSwitching) {
+    if (isBusyRef.current || isPaused || !videoRef.current || !isActive || isSwitching || isOcrMode) {
       return;
     }
 
@@ -139,10 +537,10 @@ export default function LiveDetection({
     }
 
     isBusyRef.current = true;
+    const currentSeq = ++frameSeqRef.current;
     const startTime = performance.now();
 
     try {
-      // Scale frame down to ~640px for mobile performance without accuracy loss
       const blob = await captureBlob("image/jpeg", 0.82, 640);
       if (!blob) {
         isBusyRef.current = false;
@@ -150,6 +548,21 @@ export default function LiveDetection({
       }
 
       const res = await detectionApi.detect(blob, null, true);
+
+      // STALE FRAME PROTECTION: Ignore delayed responses from older frames
+      if (currentSeq < latestCompletedSeqRef.current) {
+        return;
+      }
+      latestCompletedSeqRef.current = currentSeq;
+
+      // Store image dimensions returned from backend for canonical normalization
+      if (res.image_width && res.image_height) {
+        lastFrameMetaRef.current = {
+          width: res.image_width,
+          height: res.image_height,
+        };
+      }
+
       const elapsed = Math.round(performance.now() - startTime);
       setLatency(elapsed);
 
@@ -159,8 +572,9 @@ export default function LiveDetection({
       if (res.spatial_narration) {
         setLastNarration(res.spatial_narration);
 
-        // Debounced TTS Announcements: only speak when the set of detected objects changes
-        const currentKeys = items
+        // SECTION 5.9: Voice announcement gate: ONLY announce temporally confirmed objects!
+        const confirmedObjects = stabilizerRef.current.getConfirmedDetections();
+        const currentKeys = confirmedObjects
           .map((i) => `${i.label}_${i.position}`)
           .sort()
           .join("|");
@@ -168,38 +582,37 @@ export default function LiveDetection({
         if (
           autoNarrate &&
           autoDetection &&
+          !isVoiceSessionOpen &&
           currentKeys !== lastAnnouncedKeysRef.current &&
-          items.length > 0
+          confirmedObjects.length > 0
         ) {
           lastAnnouncedKeysRef.current = currentKeys;
-          speak(res.spatial_narration);
+          speakAnnouncement(res.spatial_narration);
           announce(res.spatial_narration);
-        } else if (items.length === 0 && lastAnnouncedKeysRef.current !== "") {
+        } else if (confirmedObjects.length === 0 && lastAnnouncedKeysRef.current !== "") {
           lastAnnouncedKeysRef.current = "";
         }
       }
     } catch (err) {
-      console.warn("[LiveDetection] Detection request failed:", err);
+      console.warn("[LiveDetection] Detection non-fatal error:", err);
     } finally {
       isBusyRef.current = false;
     }
-  }, [isPaused, isActive, isSwitching, captureBlob, autoNarrate, autoDetection, speak, announce]);
+  }, [isActive, isPaused, isSwitching, isOcrMode, captureBlob, autoNarrate, autoDetection, isVoiceSessionOpen, speakAnnouncement, announce]);
 
-  // Continuous Detection Loop (throttled ~1.3s for mobile smoothness)
+  // Detection Loop with RequestAnimationFrame & Throttling
   useEffect(() => {
     let mounted = true;
 
-    async function loop() {
+    const loop = async () => {
       if (!mounted) return;
-      if (!isPaused && isActive && !isSwitching) {
-        await performDetection();
+      await performDetection();
+      if (mounted && isActive && !isPaused && !isSwitching && !isOcrMode) {
+        loopTimeoutRef.current = setTimeout(loop, 400);
       }
-      if (mounted) {
-        loopTimeoutRef.current = setTimeout(loop, 1300);
-      }
-    }
+    };
 
-    if (isActive && !isPaused && !isSwitching) {
+    if (isActive && !isPaused && !isSwitching && !isOcrMode) {
       loopTimeoutRef.current = setTimeout(loop, 400);
     }
 
@@ -209,11 +622,12 @@ export default function LiveDetection({
         clearTimeout(loopTimeoutRef.current);
       }
     };
-  }, [isActive, isPaused, isSwitching, performDetection]);
+  }, [isActive, isPaused, isSwitching, isOcrMode, performDetection]);
 
-  // Auto-start camera on mount if requested
+  // Auto-start camera on mount if requested (protected by hasAutoStartedRef)
   useEffect(() => {
-    if (initialAutoStart) {
+    if (initialAutoStart && !hasAutoStartedRef.current) {
+      hasAutoStartedRef.current = true;
       startCamera();
     }
     return () => {
@@ -221,108 +635,389 @@ export default function LiveDetection({
     };
   }, [initialAutoStart, startCamera, stopCamera]);
 
-  // Draw Bounding Boxes on Overlay Canvas
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+  // ==========================================
+  // CANVASES: DUAL-MODE RENDERING (NORMAL DETECTION vs OCR SCAN)
+  // ==========================================
+  const renderOverlay = useCallback(() => {
+    try {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const container = containerRef.current;
+      if (!canvas || !video || !container) return;
 
-    const ctx = canvas.getContext("2d");
-    const vWidth = video.videoWidth || 640;
-    const vHeight = video.videoHeight || 480;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
 
-    canvas.width = vWidth;
-    canvas.height = vHeight;
-    ctx.clearRect(0, 0, vWidth, vHeight);
+      const cWidth = container.clientWidth;
+      const cHeight = container.clientHeight;
+      if (cWidth === 0 || cHeight === 0) return;
 
-    if (!detections || detections.length === 0 || !isActive) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(cWidth * dpr);
+      canvas.height = Math.round(cHeight * dpr);
 
-    detections.forEach((item) => {
-      const [x1, y1, x2, y2] = item.box || [0, 0, 0, 0];
-      const width = x2 - x1;
-      const height = y2 - y1;
-      const label = `${item.label.replace(/_/g, " ")} ${(item.confidence * 100).toFixed(0)}%`;
+      try {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      } catch {
+        ctx.scale(dpr, dpr);
+      }
+      ctx.clearRect(0, 0, cWidth, cHeight);
 
-      let strokeColor = "rgba(0, 113, 227, 0.9)"; // Apple Blue
-      let fillColor = "rgba(0, 113, 227, 0.16)";
-      let badgeBg = "rgba(0, 113, 227, 0.92)";
+      const sourceW = lastFrameMetaRef.current.width || video.videoWidth || 640;
+      const sourceH = lastFrameMetaRef.current.height || video.videoHeight || 360;
 
-      if (item.position === "left") {
-        strokeColor = "rgba(16, 185, 129, 0.9)"; // Emerald
-        fillColor = "rgba(16, 185, 129, 0.16)";
-        badgeBg = "rgba(16, 185, 129, 0.92)";
-      } else if (item.position === "right") {
-        strokeColor = "rgba(245, 158, 11, 0.9)"; // Amber
-        fillColor = "rgba(245, 158, 11, 0.16)";
-        badgeBg = "rgba(245, 158, 11, 0.92)";
+      // ----------------------------------------------------
+      // MODE A: OCR TEXT SCANNING OVERLAY (SECTIONS 12, 13, 37)
+      // ----------------------------------------------------
+      if (isOcrMode) {
+        if (!ocrData || !ocrData.words || ocrData.words.length === 0) {
+          return;
+        }
+
+        // 1. Draw Document Boundary if detected
+        if (ocrData.document_bbox && ocrData.document_bbox.length === 4) {
+          const mappedDoc = mapDetectionToDisplayCoordinates(
+            { normalized_box: ocrData.document_bbox },
+            {
+              containerWidth: cWidth,
+              containerHeight: cHeight,
+              sourceWidth: sourceW,
+              sourceHeight: sourceH,
+              isMirrored,
+              zoom,
+              isSoftwareZoom: !isHardwareZoomSupported,
+            }
+          );
+          if (mappedDoc) {
+            ctx.strokeStyle = "rgba(0, 113, 227, 0.75)";
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([8, 6]);
+            ctx.strokeRect(mappedDoc.x, mappedDoc.y, mappedDoc.width, mappedDoc.height);
+            ctx.setLineDash([]);
+          }
+        }
+
+        // 2. Draw Interactive Word Boxes
+        ocrData.words.forEach((wordObj, idx) => {
+          const mapped = mapDetectionToDisplayCoordinates(
+            { normalized_box: wordObj.normalized_box },
+            {
+              containerWidth: cWidth,
+              containerHeight: cHeight,
+              sourceWidth: sourceW,
+              sourceHeight: sourceH,
+              isMirrored,
+              zoom,
+              isSoftwareZoom: !isHardwareZoomSupported,
+            }
+          );
+          if (!mapped) return;
+
+          const isSelected = selectedWordIndices.has(idx);
+
+          if (isSelected) {
+            // Selected highlight: glowing translucent Apple blue pill
+            ctx.fillStyle = "rgba(0, 113, 227, 0.38)";
+            ctx.strokeStyle = "rgba(0, 113, 227, 0.95)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+              ctx.roundRect(mapped.x - 2, mapped.y - 2, mapped.width + 4, mapped.height + 4, 4);
+            } else {
+              ctx.rect(mapped.x - 2, mapped.y - 2, mapped.width + 4, mapped.height + 4);
+            }
+            ctx.fill();
+            ctx.stroke();
+          } else {
+            // Subtle boundary for unselected words
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(mapped.x, mapped.y, mapped.width, mapped.height);
+          }
+        });
+
+        return;
       }
 
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = strokeColor;
-      ctx.fillStyle = fillColor;
+      // ----------------------------------------------------
+      // MODE B: NORMAL LIVE OBJECT DETECTION OVERLAY
+      // ----------------------------------------------------
+      if (!detections || detections.length === 0 || !isActive) {
+        if (isDebug) {
+          setDebugHudData({
+            vWidth: video.videoWidth || 0,
+            vHeight: video.videoHeight || 0,
+            cWidth,
+            cHeight,
+            dpr,
+            isMirrored,
+            count: 0,
+          });
+        }
+        return;
+      }
 
-      ctx.beginPath();
-      const radius = 8;
-      ctx.roundRect ? ctx.roundRect(x1, y1, width, height, radius) : ctx.rect(x1, y1, width, height);
-      ctx.stroke();
-      ctx.fill();
+      // 1. Transform each detection through canonical coordinate mapping
+      const rawMapped = [];
+      detections.forEach((det) => {
+        const mapped = mapDetectionToDisplayCoordinates(det, {
+          containerWidth: cWidth,
+          containerHeight: cHeight,
+          sourceWidth: sourceW,
+          sourceHeight: sourceH,
+          isMirrored,
+          zoom,
+          isSoftwareZoom: !isHardwareZoomSupported,
+        });
+        if (mapped) rawMapped.push(mapped);
+      });
 
-      // Pill badge above box
-      ctx.font = "bold 13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif";
-      const textMetrics = ctx.measureText(label);
-      const paddingH = 8;
-      const badgeH = 22;
-      const badgeW = textMetrics.width + paddingH * 2;
-      const badgeY = Math.max(0, y1 - badgeH - 4);
+      // 2. Apply temporal stabilization & confirmation (Section 5.3 & 5.4)
+      const displayBoxes = stabilizerRef.current.stabilize(rawMapped);
+      const trackerStats = stabilizerRef.current.getStats();
 
-      ctx.fillStyle = badgeBg;
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(x1, badgeY, badgeW, badgeH, 6) : ctx.rect(x1, badgeY, badgeW, badgeH);
-      ctx.fill();
+      if (isDebug && displayBoxes.length > 0) {
+        setDebugHudData({
+          vWidth: video.videoWidth,
+          vHeight: video.videoHeight,
+          cWidth,
+          cHeight,
+          dpr,
+          isMirrored,
+          count: displayBoxes.length,
+          confirmed: trackerStats.confirmedCount,
+          raw: trackerStats.rawCount,
+          scale: rawMapped[0]?.scale || 1,
+          offsetX: rawMapped[0]?.offsetX || 0,
+          offsetY: rawMapped[0]?.offsetY || 0,
+        });
+      }
 
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(label, x1 + paddingH, badgeY + 15);
+      // 3. Render bounding boxes onto high-DPI canvas
+      displayBoxes.forEach((item) => {
+        const { x, y, width, height, label, confidence, position, confirmed } = item;
+        const displayLabel = `${label.replace(/_/g, " ")} ${(confidence * 100).toFixed(0)}%`;
+
+        let strokeColor = "rgba(0, 113, 227, 0.95)"; // Apple Blue
+        let fillColor = "rgba(0, 113, 227, 0.16)";
+        let badgeBg = "rgba(0, 113, 227, 0.94)";
+
+        if (position === "left") {
+          strokeColor = "rgba(16, 185, 129, 0.95)"; // Emerald
+          fillColor = "rgba(16, 185, 129, 0.16)";
+          badgeBg = "rgba(16, 185, 129, 0.94)";
+        } else if (position === "right") {
+          strokeColor = "rgba(245, 158, 11, 0.95)"; // Amber
+          fillColor = "rgba(245, 158, 11, 0.16)";
+          badgeBg = "rgba(245, 158, 11, 0.94)";
+        }
+
+        // Tentative unconfirmed boxes drawn with dashed line
+        if (!confirmed) {
+          ctx.setLineDash([4, 4]);
+        } else {
+          ctx.setLineDash([]);
+        }
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = strokeColor;
+        ctx.fillStyle = fillColor;
+
+        ctx.beginPath();
+        const radius = 8;
+        if (ctx.roundRect) {
+          ctx.roundRect(x, y, width, height, radius);
+        } else {
+          ctx.rect(x, y, width, height);
+        }
+        ctx.stroke();
+        ctx.fill();
+        ctx.setLineDash([]);
+
+        // Top compact label badge (Section 63)
+        ctx.font = "bold 13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif";
+        const textMetrics = ctx.measureText(displayLabel);
+        const paddingH = 8;
+        const badgeH = 22;
+        const badgeW = textMetrics.width + paddingH * 2;
+        const badgeY = Math.max(4, y - badgeH - 4);
+        const badgeX = Math.max(4, Math.min(x, cWidth - badgeW - 4));
+
+        ctx.fillStyle = badgeBg;
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+        } else {
+          ctx.rect(badgeX, badgeY, badgeW, badgeH);
+        }
+        ctx.fill();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(displayLabel, badgeX + paddingH, badgeY + 15);
+      });
+    } catch (err) {
+      console.warn("[LiveDetection] Overlay render non-fatal error:", err);
+    }
+  }, [detections, isActive, isMirrored, isDebug, isOcrMode, ocrData, selectedWordIndices, zoom, isHardwareZoomSupported]);
+
+  // Re-render overlay when detections, window size, orientation, or OCR selection changes
+  useEffect(() => {
+    renderOverlay();
+  }, [renderOverlay]);
+
+  // Observe container resizes
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      renderOverlay();
     });
-  }, [detections, isActive]);
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+    };
+  }, [renderOverlay]);
 
-  const handleCopyHttpsUrl = () => {
-    const httpsUrl = `https://${window.location.hostname}:${window.location.port || "5173"}${window.location.pathname}`;
-    navigator.clipboard.writeText(httpsUrl);
-    setCopiedUrl(true);
-    setTimeout(() => setCopiedUrl(false), 2500);
+  // ==========================================
+  // CANVAS TAP / TOUCH SELECTION (SECTION 13)
+  // ==========================================
+  const handleCanvasClick = (e) => {
+    if (!isOcrMode || !ocrData || !ocrData.words || ocrData.words.length === 0) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const sourceW = lastFrameMetaRef.current.width || videoRef.current?.videoWidth || 640;
+    const sourceH = lastFrameMetaRef.current.height || videoRef.current?.videoHeight || 360;
+
+    let clickedIdx = -1;
+    for (let i = 0; i < ocrData.words.length; i++) {
+      const wObj = ocrData.words[i];
+      const mapped = mapDetectionToDisplayCoordinates(
+        { normalized_box: wObj.normalized_box },
+        {
+          containerWidth: rect.width,
+          containerHeight: rect.height,
+          sourceWidth: sourceW,
+          sourceHeight: sourceH,
+          isMirrored,
+          zoom,
+          isSoftwareZoom: !isHardwareZoomSupported,
+        }
+      );
+      if (mapped) {
+        if (
+          clickX >= mapped.x - 4 &&
+          clickX <= mapped.x + mapped.width + 4 &&
+          clickY >= mapped.y - 4 &&
+          clickY <= mapped.y + mapped.height + 4
+        ) {
+          clickedIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (clickedIdx !== -1) {
+      const nextSet = new Set(selectedWordIndices);
+      if (nextSet.has(clickedIdx)) {
+        nextSet.delete(clickedIdx);
+      } else {
+        nextSet.add(clickedIdx);
+      }
+      setSelectedWordIndices(nextSet);
+
+      const words = [];
+      ocrData.words.forEach((w, idx) => {
+        if (nextSet.has(idx)) {
+          words.push(w.text);
+        }
+      });
+      const txt = words.join(" ");
+      setSelectedText(txt);
+      if (onOcrCaptured) onOcrCaptured(ocrData, txt);
+    }
   };
 
-  const isListening = voiceState === "LISTENING";
-  const isSpeaking = voiceState === "SPEAKING";
-  const isProcessing = voiceState === "PROCESSING";
+  const isListening = voiceState === "listening" || voiceState === "requesting_permission";
 
   return (
     <section
+      ref={sectionRef}
       aria-label="Live Assistive Camera and Vision Interface"
-      className="glass-panel"
-      style={{
-        padding: "0.75rem",
-        borderRadius: "var(--radius-xl)",
-        position: "relative",
-        overflow: "hidden",
-        width: "100%",
-        boxShadow: "var(--shadow-elevation-medium)",
-      }}
+      className={isFullscreen ? "fullscreen-camera-active" : "glass-panel"}
+      style={
+        isFullscreen
+          ? {
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              width: "100vw",
+              height: "100dvh",
+              maxHeight: "100dvh",
+              zIndex: 999999,
+              backgroundColor: "#000000",
+              padding: 0,
+              margin: 0,
+              borderRadius: 0,
+              border: "none",
+              boxShadow: "none",
+              backdropFilter: "none",
+              WebkitBackdropFilter: "none",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }
+          : {
+              padding: "0.75rem",
+              borderRadius: "var(--radius-xl)",
+              position: "relative",
+              overflow: "hidden",
+              width: "100%",
+              boxShadow: "var(--shadow-elevation-medium)",
+            }
+      }
     >
       {/* Viewport Frame */}
       <div
-        style={{
-          position: "relative",
-          width: "100%",
-          aspectRatio: "4 / 3",
-          maxHeight: "75vh",
-          backgroundColor: "#000000",
-          borderRadius: "var(--radius-lg)",
-          overflow: "hidden",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+        ref={containerRef}
+        onClick={handleCanvasClick}
+        style={
+          isFullscreen
+            ? {
+                position: "relative",
+                width: "100vw",
+                height: "100dvh",
+                maxHeight: "100dvh",
+                zIndex: 1,
+                backgroundColor: "#000000",
+                borderRadius: 0,
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: 1,
+              }
+            : {
+                position: "relative",
+                width: "100%",
+                height: "auto",
+                minHeight: "360px",
+                aspectRatio: "16 / 9",
+                backgroundColor: "#080c14",
+                borderRadius: "var(--radius-lg)",
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }
+        }
       >
         {/* Live Video Feed */}
         <video
@@ -334,11 +1029,21 @@ export default function LiveDetection({
             width: "100%",
             height: "100%",
             objectFit: "cover",
+            transform:
+              !isHardwareZoomSupported && zoom > 1.0
+                ? isMirrored
+                  ? `scaleX(-1) scale(${zoom})`
+                  : `scale(${zoom})`
+                : isMirrored
+                ? "scaleX(-1)"
+                : "none",
+            transformOrigin: "center center",
+            transition: "transform 0.15s ease",
             display: isActive ? "block" : "none",
           }}
         />
 
-        {/* Canvas Overlay for Bounding Boxes */}
+        {/* Canvas Overlay for Bounding Boxes & Google Lens Text Boxes */}
         <canvas
           ref={canvasRef}
           style={{
@@ -346,50 +1051,104 @@ export default function LiveDetection({
             inset: 0,
             width: "100%",
             height: "100%",
-            objectFit: "cover",
-            pointerEvents: "none",
+            pointerEvents: isOcrMode ? "auto" : "none",
+            cursor: isOcrMode ? "pointer" : "default",
             display: isActive ? "block" : "none",
           }}
         />
 
-        {/* Floating Top Bar (Status + Flip) */}
+        {/* Development Coordinate Debug HUD (?debugVision=true) */}
+        {isDebug && debugHudData && isActive && (
+          <div
+            style={{
+              position: "absolute",
+              top: "3.5rem",
+              left: "0.75rem",
+              background: "rgba(0, 0, 0, 0.85)",
+              color: "#4ade80",
+              fontFamily: "monospace",
+              fontSize: "0.72rem",
+              padding: "0.5rem 0.75rem",
+              borderRadius: "8px",
+              border: "1px solid rgba(74, 222, 128, 0.4)",
+              zIndex: 30,
+              pointerEvents: "none",
+              lineHeight: 1.4,
+              maxWidth: "90%",
+            }}
+          >
+            <div><strong>[VISION COORD DEBUG HUD]</strong></div>
+            <div>Camera Sensor: {debugHudData.vWidth} × {debugHudData.vHeight}</div>
+            <div>Raw: {debugHudData.raw || 0} | Confirmed: {debugHudData.confirmed || 0}</div>
+            <div>Mode: {isOcrMode ? "TEXT SCAN" : "DETECTION"} | Mirrored: {isMirrored ? "YES" : "NO"}</div>
+            <div>Latency: {latency || 0}ms</div>
+          </div>
+        )}
+
+        {/* Flashlight Notice Pill */}
+        {torchNotice && (
+          <div
+            style={{
+              position: "absolute",
+              top: "3.8rem",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "rgba(239, 68, 68, 0.9)",
+              color: "#ffffff",
+              padding: "0.4rem 0.9rem",
+              borderRadius: "999px",
+              fontSize: "0.78rem",
+              fontWeight: 600,
+              zIndex: 35,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+            }}
+          >
+            {torchNotice}
+          </div>
+        )}
+
+        {/* Floating Top Bar (Status + Flash + Flip + Fullscreen) */}
         {isActive && (
           <div
             style={{
               position: "absolute",
-              top: "0.75rem",
-              left: "0.75rem",
-              right: "0.75rem",
+              top: isFullscreen ? "calc(0.75rem + env(safe-area-inset-top, 0px))" : "0.75rem",
+              left: isFullscreen ? "calc(0.75rem + env(safe-area-inset-left, 0px))" : "0.75rem",
+              right: isFullscreen ? "calc(0.75rem + env(safe-area-inset-right, 0px))" : "0.75rem",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              zIndex: 15,
+              zIndex: 30,
               pointerEvents: "none",
+              gap: "0.4rem",
             }}
           >
-            {/* Live Indicator Pill */}
+            {/* Live Indicator Pill & Exit Fullscreen Pill */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "0.5rem",
+                gap: "0.35rem",
                 pointerEvents: "auto",
+                flexShrink: 0,
               }}
             >
               <div
                 style={{
-                  background: "rgba(0, 0, 0, 0.65)",
+                  background: isOcrMode ? "rgba(0, 113, 227, 0.85)" : "rgba(0, 0, 0, 0.65)",
                   backdropFilter: "blur(10px)",
                   WebkitBackdropFilter: "blur(10px)",
-                  padding: "0.35rem 0.75rem",
+                  padding: "0.35rem 0.65rem",
                   borderRadius: "999px",
-                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  border: isOcrMode
+                    ? "1px solid rgba(0, 113, 227, 0.5)"
+                    : "1px solid rgba(255, 255, 255, 0.15)",
                   color: "#ffffff",
-                  fontSize: "0.78rem",
+                  fontSize: "0.75rem",
                   fontWeight: 650,
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
+                  gap: "5px",
                 }}
               >
                 <span
@@ -397,184 +1156,731 @@ export default function LiveDetection({
                     width: "8px",
                     height: "8px",
                     borderRadius: "50%",
-                    backgroundColor: isPaused ? "var(--accent-amber)" : "var(--accent-green)",
-                    boxShadow: isPaused
+                    backgroundColor: isOcrMode
+                      ? "var(--accent-primary)"
+                      : isPaused
+                      ? "var(--accent-amber)"
+                      : "var(--accent-green)",
+                    boxShadow: isOcrMode
+                      ? "0 0 8px var(--accent-primary)"
+                      : isPaused
                       ? "0 0 8px var(--accent-amber)"
                       : "0 0 8px var(--accent-green)",
                   }}
                 />
-                <span>{isPaused ? "PAUSED" : "LIVE"}</span>
+                <span>{isOcrMode ? "TEXT" : isPaused ? "PAUSED" : "LIVE"}</span>
               </div>
 
+              {isFullscreen && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleFullscreen(e);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleFullscreen(e);
+                  }}
+                  aria-label="Exit Fullscreen Camera View"
+                  style={{
+                    background: "rgba(0, 0, 0, 0.75)",
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                    padding: "0.35rem 0.65rem",
+                    borderRadius: "999px",
+                    border: "1px solid rgba(255, 255, 255, 0.3)",
+                    color: "#ffffff",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    cursor: "pointer",
+                    touchAction: "manipulation",
+                  }}
+                  title="Exit Fullscreen"
+                >
+                  <Minimize2 size={13} />
+                  <span>Exit</span>
+                </button>
+              )}
+
+              {!isOcrMode && !isFullscreen ? (
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.65)",
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                    padding: "0.35rem 0.65rem",
+                    borderRadius: "999px",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    color: "#ffffff",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {detections.length} {detections.length === 1 ? "Obj" : "Objs"}
+                </div>
+              ) : isOcrMode ? (
+                <div
+                  style={{
+                    background: "rgba(0, 0, 0, 0.65)",
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                    padding: "0.35rem 0.65rem",
+                    borderRadius: "999px",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    color: "#ffffff",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {selectedWordIndices.size} Sel
+                </div>
+              ) : null}
+            </div>
+
+            {/* Top Right Action Buttons: Zoom + Flash + Flip Camera + Fullscreen */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", pointerEvents: "auto", flexWrap: "nowrap", justifyContent: "flex-end" }}>
+              {/* Camera Zoom Control (Minus, Level, Plus) */}
               <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  background: "rgba(0, 0, 0, 0.65)",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(255, 255, 255, 0.18)",
+                  padding: "0.15rem 0.35rem",
+                  gap: "1px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={zoom <= (zoomRange?.min || 1.0)}
+                  aria-label="Zoom out"
+                  title="Zoom Out"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: zoom <= (zoomRange?.min || 1.0) ? "rgba(255, 255, 255, 0.35)" : "#ffffff",
+                    cursor: zoom <= (zoomRange?.min || 1.0) ? "default" : "pointer",
+                    padding: "3px 4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Minus size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={resetZoom}
+                  aria-label={`Zoom level ${zoom.toFixed(1)}x. Tap to reset`}
+                  title="Reset Zoom to 1.0x"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: zoom > 1.0 ? "var(--accent-primary, #0071e3)" : "#ffffff",
+                    fontSize: "0.72rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "1px 3px",
+                    minWidth: "2.2rem",
+                    textAlign: "center",
+                  }}
+                >
+                  {zoom.toFixed(1)}x
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={zoom >= (zoomRange?.max || 3.0)}
+                  aria-label="Zoom in"
+                  title="Zoom In"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: zoom >= (zoomRange?.max || 3.0) ? "rgba(255, 255, 255, 0.35)" : "#ffffff",
+                    cursor: zoom >= (zoomRange?.max || 3.0) ? "default" : "pointer",
+                    padding: "3px 4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+
+              {/* Camera Flash / Torch Button (Section 7) */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleTorch();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleTorch();
+                }}
+                aria-label={isTorchOn ? "Turn off camera flash" : "Turn on camera flash"}
+                style={{
+                  background: isTorchOn ? "var(--accent-amber)" : "rgba(0, 0, 0, 0.65)",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  padding: "0.45rem 0.65rem",
+                  minWidth: "38px",
+                  minHeight: "38px",
+                  borderRadius: "999px",
+                  border: isTorchOn
+                    ? "1px solid var(--accent-amber)"
+                    : "1px solid rgba(255, 255, 255, 0.15)",
+                  color: isTorchOn ? "#000000" : "#ffffff",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  touchAction: "manipulation",
+                  transition: "all var(--motion-fast)",
+                }}
+                title={isTorchOn ? "Turn Flash Off" : "Turn Flash On"}
+              >
+                {isTorchOn ? <Zap size={15} fill="#000000" /> : <Zap size={15} />}
+              </button>
+
+              {/* Flip Camera Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleCamera();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleToggleCamera();
+                }}
+                disabled={isSwitching}
+                aria-label={`Flip camera. Currently using ${facingMode === "environment" ? "back" : "front"} camera`}
                 style={{
                   background: "rgba(0, 0, 0, 0.65)",
                   backdropFilter: "blur(10px)",
                   WebkitBackdropFilter: "blur(10px)",
-                  padding: "0.35rem 0.75rem",
+                  padding: "0.45rem 0.65rem",
+                  minHeight: "38px",
                   borderRadius: "999px",
                   border: "1px solid rgba(255, 255, 255, 0.15)",
                   color: "#ffffff",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  cursor: isSwitching ? "wait" : "pointer",
+                  opacity: isSwitching ? 0.7 : 1,
                   fontSize: "0.78rem",
                   fontWeight: 600,
+                  touchAction: "manipulation",
+                  transition: "transform var(--motion-fast)",
                 }}
+                title="Switch Front/Back camera"
               >
-                {detections.length} {detections.length === 1 ? "Object" : "Objects"}
-              </div>
-            </div>
+                <SwitchCamera size={15} className={isSwitching ? "animate-spin" : ""} />
+                <span>{isSwitching ? "..." : facingMode === "environment" ? "Back" : "Front"}</span>
+              </button>
 
-            {/* Camera Flip Button */}
+              {/* Fullscreen Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleFullscreen(e);
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleFullscreen(e);
+                }}
+                aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Immersive Fullscreen"}
+                style={{
+                  background: isFullscreen ? "var(--accent-primary, #0071e3)" : "rgba(0, 0, 0, 0.65)",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  padding: "0.45rem 0.65rem",
+                  minWidth: "38px",
+                  minHeight: "38px",
+                  borderRadius: "999px",
+                  border: isFullscreen ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.2)",
+                  color: "#ffffff",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  touchAction: "manipulation",
+                  boxShadow: isFullscreen ? "0 0 12px rgba(0, 113, 227, 0.6)" : "none",
+                  transition: "all var(--motion-fast)",
+                }}
+                title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Camera (Hero View)"}
+              >
+                {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Text Mode Selection Toolbar (Section 14 & 39) */}
+        {isActive && isOcrMode && (
+          <div
+            style={{
+              position: "absolute",
+              top: "3.2rem",
+              left: "0.75rem",
+              right: "0.75rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "0.45rem",
+              zIndex: 22,
+              flexWrap: "wrap",
+            }}
+          >
             <button
-              onClick={toggleFacingMode}
-              disabled={isSwitching}
-              aria-label={`Flip camera. Currently using ${facingMode === "environment" ? "back" : "front"} camera`}
+              onClick={handleSelectAll}
+              className="glass-btn"
+              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              title="Select all detected text on the page"
+            >
+              Select All
+            </button>
+            <button
+              onClick={handleSelectParagraph}
+              className="glass-btn"
+              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              title="Select paragraph"
+            >
+              Select Paragraph
+            </button>
+            <button
+              onClick={handleClearSelection}
+              className="glass-btn"
+              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              title="Clear selection"
+            >
+              Clear
+            </button>
+            <button
+              onClick={startOcrScan}
+              disabled={isOcrScanning}
+              className="glass-btn"
+              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              title="Rescan page"
+            >
+              <RefreshCw size={13} className={isOcrScanning ? "animate-spin" : ""} />
+              <span>Rescan</span>
+            </button>
+            <button
+              onClick={exitOcrMode}
               style={{
-                pointerEvents: "auto",
-                background: "rgba(0, 0, 0, 0.65)",
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
-                padding: "0.45rem 0.75rem",
-                borderRadius: "999px",
-                border: "1px solid rgba(255, 255, 255, 0.15)",
+                background: "rgba(239, 68, 68, 0.8)",
+                border: "1px solid rgba(239, 68, 68, 0.5)",
                 color: "#ffffff",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "999px",
+                fontSize: "0.75rem",
+                fontWeight: 600,
                 display: "flex",
                 alignItems: "center",
-                gap: "5px",
+                gap: "4px",
                 cursor: "pointer",
-                fontSize: "0.78rem",
-                fontWeight: 600,
-                transition: "transform var(--motion-fast)",
               }}
-              title="Switch Front/Back camera"
+              title="Exit Text Scan Mode"
             >
-              <SwitchCamera size={15} className={isSwitching ? "animate-spin" : ""} />
-              <span>{facingMode === "environment" ? "Back" : "Front"}</span>
+              <X size={13} />
+              <span>Exit Text Mode</span>
             </button>
           </div>
         )}
 
-        {/* Floating Bottom Bar (Mic, OCR, Narration, Pause) */}
-        {isActive && (
+        {/* Selected Text Floating Action Bar (Sections 15-20) */}
+        {isActive && isOcrMode && selectedText && (
           <div
             style={{
               position: "absolute",
-              bottom: "0.85rem",
-              left: "0.75rem",
-              right: "0.75rem",
+              bottom: isFullscreen ? "calc(0.85rem + env(safe-area-inset-bottom, 0px))" : "0.85rem",
+              left: isFullscreen ? "calc(0.75rem + env(safe-area-inset-left, 0px))" : "0.75rem",
+              right: isFullscreen ? "calc(0.75rem + env(safe-area-inset-right, 0px))" : "0.75rem",
+              background: "rgba(10, 15, 26, 0.92)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              border: "1px solid rgba(0, 113, 227, 0.4)",
+              borderRadius: "var(--radius-lg)",
+              padding: "0.75rem 1rem",
+              zIndex: 25,
+              boxShadow: "0 10px 30px rgba(0, 0, 0, 0.6)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.6rem",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: 600 }}>
+                Selected Text ({selectedWordIndices.size} words):
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <button
+                  onClick={handleCopySelected}
+                  style={{
+                    background: isCopiedSelected ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.08)",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    color: isCopiedSelected ? "var(--accent-green)" : "var(--text-secondary)",
+                    padding: "2px 7px",
+                    borderRadius: "4px",
+                    fontSize: "0.7rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                  title="Copy full selected text"
+                >
+                  {isCopiedSelected ? <Check size={11} /> : <Copy size={11} />}
+                  <span>{isCopiedSelected ? "Copied" : "Copy"}</span>
+                </button>
+                <div style={{ fontSize: "0.72rem", color: "var(--accent-primary)", fontWeight: 650 }}>
+                  Active Ground Truth
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                fontSize: "0.85rem",
+                color: "#ffffff",
+                lineHeight: 1.45,
+                maxHeight: "5.5rem",
+                overflowY: "auto",
+                fontFamily: "inherit",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                userSelect: "text",
+                padding: "0.3rem 0.5rem",
+                background: "rgba(0, 0, 0, 0.25)",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid rgba(255, 255, 255, 0.06)",
+              }}
+            >
+              {selectedText}
+            </div>
+
+            {/* Action Buttons: Read Aloud | Microphone | Ask Tutor */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>
+              <button
+                onClick={handleReadSelected}
+                className="glass-btn primary"
+                style={{ padding: "0.45rem 0.75rem", fontSize: "0.78rem" }}
+                title="Read selected text aloud"
+              >
+                <Volume2 size={14} />
+                <span>Read Aloud</span>
+              </button>
+
+              {/* OCR Voice Query Button (Sections 1 & 8 of MASTER PROMPT) */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (voiceState === "listening" || voiceState === "requesting_permission") {
+                    stopListening();
+                  } else if (isVoiceSessionOpen) {
+                    closeVoiceSession();
+                  } else {
+                    startListening(selectedText, "OCR Document");
+                  }
+                }}
+                className="glass-btn"
+                style={{
+                  padding: "0.45rem 0.75rem",
+                  fontSize: "0.78rem",
+                  background:
+                    isVoiceSessionOpen
+                      ? "var(--accent-green, #10b981)"
+                      : "rgba(255, 255, 255, 0.08)",
+                  borderColor:
+                    isVoiceSessionOpen
+                      ? "var(--accent-green, #10b981)"
+                      : "rgba(255, 255, 255, 0.15)",
+                  color: "#ffffff",
+                  boxShadow:
+                    voiceState === "listening" || voiceState === "requesting_permission"
+                      ? "0 0 12px rgba(16, 185, 129, 0.6)"
+                      : "none",
+                }}
+                title={
+                  voiceState === "listening"
+                    ? "Listening... Tap to stop"
+                    : "Ask question about selected text using your voice"
+                }
+              >
+                <Mic
+                  size={14}
+                  className={
+                    voiceState === "listening" || voiceState === "requesting_permission"
+                      ? "animate-pulse"
+                      : ""
+                  }
+                />
+                <span>
+                  {voiceState === "listening"
+                    ? "Listening..."
+                    : voiceState === "thinking"
+                    ? "Thinking..."
+                    : "Ask Mic"}
+                </span>
+              </button>
+
+              <button
+                onClick={handleAskTutorSelected}
+                style={{
+                  background: "var(--accent-primary)",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: "999px",
+                  padding: "0.45rem 0.85rem",
+                  fontSize: "0.78rem",
+                  fontWeight: 650,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  cursor: "pointer",
+                  marginLeft: "auto",
+                  boxShadow: "0 2px 10px rgba(0, 113, 227, 0.4)",
+                }}
+                title="Ask question about this text in Assistive Tutor"
+              >
+                <Bot size={15} />
+                <span>Ask Tutor</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+
+            {ocrActionMessage && (
+              <div
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--accent-green)",
+                  backgroundColor: "rgba(16, 185, 129, 0.12)",
+                  padding: "0.4rem 0.6rem",
+                  borderRadius: "6px",
+                  lineHeight: 1.3,
+                }}
+              >
+                {ocrActionMessage}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Primary Voice Assistant Microphone & Dialogue Panel */}
+        {isVoiceSessionOpen && (
+          <VoiceWaveformOverlay
+            voiceState={voiceState}
+            transcript={transcript}
+            interimTranscript={interimTranscript}
+            onStop={stopListening}
+            onCancel={closeVoiceSession}
+            targetContextName={activeContextName || (isOcrMode ? "OCR Document" : "Vision Mode")}
+            position={isOcrMode ? "top" : "bottom"}
+          />
+        )}
+
+        {/* Floating Bottom Bar in Normal Mode (Read Text, Mic, Speaker, Pause) */}
+        {isActive && !isOcrMode && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: isFullscreen ? "calc(0.85rem + env(safe-area-inset-bottom, 0px))" : "0.85rem",
+              left: isFullscreen ? "calc(0.75rem + env(safe-area-inset-left, 0px))" : "0.75rem",
+              right: isFullscreen ? "calc(0.75rem + env(safe-area-inset-right, 0px))" : "0.75rem",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               zIndex: 15,
             }}
           >
-            {/* Left Controls: OCR Trigger */}
+            {/* Left Controls: Read Text Trigger (Enters Google Lens Mode) */}
             <button
-              onClick={captureOcrFromCamera}
-              disabled={isOcrProcessing}
-              aria-label="Scan and read text from camera view"
+              onClick={startOcrScan}
+              disabled={isOcrScanning}
+              aria-label="Scan document and enter text selection mode"
               style={{
-                background: "rgba(0, 0, 0, 0.7)",
+                background: "rgba(0, 0, 0, 0.75)",
                 backdropFilter: "blur(12px)",
                 WebkitBackdropFilter: "blur(12px)",
                 border: "1px solid rgba(255, 255, 255, 0.2)",
                 color: "#ffffff",
                 borderRadius: "999px",
-                padding: "0.55rem 0.9rem",
+                padding: "0.55rem 0.95rem",
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
                 fontSize: "0.82rem",
-                fontWeight: 600,
+                fontWeight: 650,
                 cursor: "pointer",
+                boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
               }}
-              title="Point camera at textbook and tap to read"
+              title="Point camera at textbook and tap to read text"
             >
-              <FileText size={16} color="var(--accent-amber)" />
-              <span>{isOcrProcessing ? "Reading..." : "Read Text"}</span>
+              <ScanLine size={16} color="var(--accent-amber)" />
+              <span>Read Text</span>
             </button>
 
-            {/* Center: PRIMARY VOICE MICROPHONE BUTTON */}
-            <button
-              onClick={() => startListening()}
-              aria-label={
-                isListening
-                  ? "Stop listening"
-                  : isSpeaking
-                  ? "Speaking response aloud"
-                  : "Start voice assistant"
-              }
-              style={{
-                width: "60px",
-                height: "60px",
-                borderRadius: "50%",
-                background: isListening
-                  ? "var(--accent-primary)"
-                  : isSpeaking
-                  ? "var(--accent-green)"
-                  : isProcessing
-                  ? "var(--accent-amber)"
-                  : "rgba(255, 255, 255, 0.95)",
-                border: "3px solid rgba(255, 255, 255, 0.8)",
-                color: isListening || isSpeaking || isProcessing ? "#ffffff" : "#000000",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                boxShadow: isListening
-                  ? "0 0 25px var(--accent-primary)"
-                  : isSpeaking
-                  ? "0 0 22px var(--accent-green)"
-                  : "0 4px 18px rgba(0, 0, 0, 0.4)",
-                transform: isListening ? "scale(1.08)" : "scale(1)",
-                transition: "all var(--motion-fast)",
-              }}
-              title="Tap to speak your question"
-            >
-              <Mic size={26} className={isListening ? "animate-pulse" : ""} />
-            </button>
-
-            {/* Right Controls: Mute + Pause */}
-            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            {/* Right Controls: Mic, Speaker (Mute), Pause */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              {/* Microphone: User Speech Input Only */}
               <button
-                onClick={() => setAutoNarrate((prev) => !prev)}
-                aria-label={autoNarrate ? "Mute automatic speech" : "Enable speech narration"}
+                type="button"
+                onClick={() => {
+                  if (voiceState === "listening" || voiceState === "requesting_permission") {
+                    stopListening();
+                  } else if (isVoiceSessionOpen) {
+                    closeVoiceSession();
+                  } else {
+                    startListening(null, "Vision Mode");
+                  }
+                }}
+                aria-label={
+                  isVoiceSessionOpen
+                    ? "Voice assistant open... Tap to close"
+                    : "Activate voice assistant"
+                }
                 style={{
-                  background: "rgba(0, 0, 0, 0.7)",
+                  background:
+                    isVoiceSessionOpen
+                      ? "var(--accent-green, #10b981)"
+                      : voiceState === "thinking" || voiceState === "processing_speech"
+                      ? "var(--accent-blue, #0071e3)"
+                      : "rgba(0, 0, 0, 0.75)",
                   backdropFilter: "blur(12px)",
                   WebkitBackdropFilter: "blur(12px)",
-                  border: "1px solid rgba(255, 255, 255, 0.2)",
-                  color: autoNarrate ? "#ffffff" : "var(--accent-rose)",
+                  border:
+                    isVoiceSessionOpen
+                      ? "1px solid var(--accent-green, #10b981)"
+                      : "1px solid rgba(255, 255, 255, 0.2)",
+                  color: "#ffffff",
+                  width: "42px",
+                  height: "42px",
                   borderRadius: "50%",
-                  width: "40px",
-                  height: "40px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   cursor: "pointer",
+                  transition: "all var(--motion-fast)",
+                  boxShadow:
+                    voiceState === "listening" || voiceState === "requesting_permission"
+                      ? "0 0 16px rgba(16, 185, 129, 0.75)"
+                      : "none",
                 }}
-                title={autoNarrate ? "Audio narration active" : "Audio narration muted"}
+                title={
+                  voiceState === "listening"
+                    ? "Listening... Tap to stop"
+                    : voiceState === "thinking"
+                    ? "Thinking..."
+                    : "Voice Assistant (Microphone)"
+                }
               >
-                {autoNarrate ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                {voiceState === "thinking" || voiceState === "processing_speech" ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Mic
+                    size={18}
+                    className={
+                      voiceState === "listening" || voiceState === "requesting_permission"
+                        ? "animate-pulse"
+                        : ""
+                    }
+                  />
+                )}
               </button>
 
+              {/* Mute Button: Pulses green ONLY when assistant is actively speaking! */}
               <button
-                onClick={() => setIsPaused((prev) => !prev)}
-                aria-label={isPaused ? "Resume detection" : "Pause detection"}
+                type="button"
+                onClick={() => setAutoNarrate((prev) => !prev)}
+                aria-label={
+                  autoNarrate
+                    ? "Disable speech announcements (Mute)"
+                    : "Enable speech announcements (Unmute)"
+                }
                 style={{
-                  background: "rgba(0, 0, 0, 0.7)",
+                  background:
+                    autoNarrate && isSpeaking
+                      ? "var(--accent-green, #10b981)"
+                      : autoNarrate
+                      ? "rgba(0, 0, 0, 0.75)"
+                      : "rgba(239, 68, 68, 0.8)",
                   backdropFilter: "blur(12px)",
                   WebkitBackdropFilter: "blur(12px)",
-                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                  border:
+                    autoNarrate && isSpeaking
+                      ? "1px solid var(--accent-green, #10b981)"
+                      : "1px solid rgba(255, 255, 255, 0.2)",
                   color: "#ffffff",
+                  width: "42px",
+                  height: "42px",
                   borderRadius: "50%",
-                  width: "40px",
-                  height: "40px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   cursor: "pointer",
+                  transition: "all var(--motion-fast)",
+                  boxShadow:
+                    autoNarrate && isSpeaking
+                      ? "0 0 16px rgba(16, 185, 129, 0.75)"
+                      : "none",
                 }}
-                title={isPaused ? "Resume live detection" : "Pause live detection"}
+                title={
+                  autoNarrate && isSpeaking
+                    ? "Assistant is Speaking"
+                    : autoNarrate
+                    ? "Speech Enabled (Click to Mute)"
+                    : "Speech Muted (Click to Unmute)"
+                }
+              >
+                {autoNarrate ? (
+                  <Volume2 size={18} className={isSpeaking ? "animate-pulse" : ""} />
+                ) : (
+                  <VolumeX size={18} />
+                )}
+              </button>
+
+              {/* Pause Button: Pauses vision monitoring only */}
+              <button
+                type="button"
+                onClick={() => setIsPaused((prev) => !prev)}
+                aria-label={isPaused ? "Resume vision monitoring" : "Pause vision monitoring"}
+                style={{
+                  background: isPaused ? "var(--accent-amber)" : "rgba(0, 0, 0, 0.75)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                  color: isPaused ? "#000000" : "#ffffff",
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  transition: "all var(--motion-fast)",
+                }}
+                title={isPaused ? "Resume Stream" : "Pause Stream"}
               >
                 {isPaused ? <Play size={18} /> : <Pause size={18} />}
               </button>
@@ -582,17 +1888,17 @@ export default function LiveDetection({
           </div>
         )}
 
-        {/* INACTIVE / PERMISSION / DIAGNOSTIC OVERLAY */}
+        {/* Fallback & Inactive States */}
         {!isActive && (
           <div
             style={{
-              padding: "1.75rem",
+              padding: "2rem",
               textAlign: "center",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               gap: "1rem",
-              maxWidth: "520px",
+              maxWidth: "480px",
             }}
           >
             {errorType === "INSECURE_CONTEXT" ? (
@@ -612,55 +1918,51 @@ export default function LiveDetection({
                   <Lock size={28} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: "1.15rem", fontWeight: 700, margin: "0 0 0.4rem 0", color: "#ffffff" }}>
-                    HTTPS Connection Required
+                  <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "#ffffff", marginBottom: "0.5rem" }}>
+                    HTTPS Required on Mobile
                   </h3>
-                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", lineHeight: 1.5, margin: 0 }}>
-                    Mobile browsers strictly block camera access over plain HTTP. Please switch to the secure HTTPS
-                    address to enable live camera detection.
+                  <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                    Mobile browsers strictly block camera access over plain HTTP. Open the secure address on your mobile device:
                   </p>
                 </div>
-
-                <div
-                  style={{
-                    backgroundColor: "rgba(255, 255, 255, 0.08)",
-                    padding: "0.6rem 0.85rem",
-                    borderRadius: "var(--radius-sm)",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "0.82rem",
-                    color: "#ffffff",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  https://{window.location.hostname}:{window.location.port || "5173"}
-                </div>
-
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "center" }}>
-                  <GlassButton variant="secondary" onClick={handleCopyHttpsUrl}>
-                    {copiedUrl ? <Check size={16} color="var(--accent-green)" /> : <Copy size={16} />}
-                    <span>{copiedUrl ? "Copied Link" : "Copy HTTPS Link"}</span>
-                  </GlassButton>
-                  <GlassButton
-                    variant="primary"
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
                     onClick={() => {
-                      window.location.href = `https://${window.location.hostname}:${window.location.port || "5173"}${window.location.pathname}`;
+                      const url = `https://${window.location.hostname}:${window.location.port || "5173"}${window.location.pathname}`;
+                      navigator.clipboard.writeText(url);
+                      setCopiedUrl(true);
+                      setTimeout(() => setCopiedUrl(false), 2500);
                     }}
+                    className="glass-btn primary"
+                    style={{ padding: "0.6rem 1rem", fontSize: "0.82rem" }}
                   >
-                    Switch to HTTPS Now
-                  </GlassButton>
+                    {copiedUrl ? <Check size={16} /> : <Copy size={16} />}
+                    <span>{copiedUrl ? "Copied HTTPS URL" : "Copy HTTPS URL"}</span>
+                  </button>
                 </div>
               </>
-            ) : camError ? (
+            ) : errorType === "PERMISSION_DENIED" ? (
               <>
-                <AlertTriangle size={40} color="var(--accent-rose)" />
-                <div>
-                  <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: "0 0 0.35rem 0", color: "#ffffff" }}>
-                    Camera Access Needed
-                  </h3>
-                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", margin: 0 }}>
-                    {camError}
-                  </p>
+                <div
+                  style={{
+                    width: "56px",
+                    height: "56px",
+                    borderRadius: "50%",
+                    background: "rgba(239, 68, 68, 0.15)",
+                    color: "var(--accent-red)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <AlertTriangle size={28} />
                 </div>
+                <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "#ffffff", margin: 0 }}>
+                  Camera Permission Denied
+                </h3>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 }}>
+                  {camError || "Please allow camera permissions in your mobile browser settings to start live assistive vision."}
+                </p>
                 <GlassButton variant="primary" onClick={() => startCamera()}>
                   <RefreshCw size={16} />
                   <span>Try Again</span>
@@ -668,19 +1970,29 @@ export default function LiveDetection({
               </>
             ) : (
               <>
-                <Camera size={44} color="var(--accent-primary)" strokeWidth={1.5} />
-                <div>
-                  <h3 style={{ fontSize: "1.2rem", fontWeight: 700, margin: "0 0 0.35rem 0", color: "#ffffff" }}>
-                    Live Camera Assistive Vision
-                  </h3>
-                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", margin: 0, lineHeight: 1.5 }}>
-                    Your camera acts as your assistive sensor for real-time FieldNet V3 object detection and textbook
-                    reading.
-                  </p>
+                <div
+                  style={{
+                    width: "56px",
+                    height: "56px",
+                    borderRadius: "50%",
+                    background: "rgba(0, 113, 227, 0.15)",
+                    color: "var(--accent-primary)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Camera size={28} />
                 </div>
+                <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "#ffffff", margin: 0 }}>
+                  Camera is Ready
+                </h3>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 }}>
+                  Point your camera at your study desk or textbook to start live assistive object detection and Google Lens-style reading.
+                </p>
                 <GlassButton variant="primary" onClick={() => startCamera()} style={{ padding: "0.75rem 1.75rem" }}>
-                  <Camera size={18} />
-                  <span>Enable Camera</span>
+                  <Play size={18} />
+                  <span>Start Camera</span>
                 </GlassButton>
               </>
             )}
@@ -688,24 +2000,34 @@ export default function LiveDetection({
         )}
       </div>
 
-      {/* Latency & Hardware Stats Footer */}
-      {isActive && latency && (
+      {/* Real-Time Status Bar below Camera Viewport */}
+      {!isFullscreen && (
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginTop: "0.5rem",
+            marginTop: "0.75rem",
             padding: "0.25rem 0.5rem",
-            fontSize: "0.75rem",
-            color: "var(--text-tertiary)",
+            fontSize: "0.78rem",
+            color: "var(--text-secondary)",
+            flexWrap: "wrap",
+            gap: "0.5rem",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <Cpu size={12} />
-            <span>FieldNet V3 Latency: {latency} ms</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <Cpu size={15} style={{ color: "var(--accent-primary)" }} />
+            <span>FieldNet V3 Neural Engine + Tesseract OCR</span>
           </div>
-          <div>Facing: {facingMode === "environment" ? "Back (World)" : "Front (User)"}</div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            {latency !== null && (
+              <span>
+                Latency: <strong style={{ color: latency < 120 ? "var(--accent-green)" : "var(--accent-amber)" }}>{latency}ms</strong>
+              </span>
+            )}
+            <div>Facing: {facingMode === "environment" ? "Back (World)" : "Front (User)"}</div>
+          </div>
         </div>
       )}
     </section>

@@ -30,8 +30,9 @@ class TutorService:
         if self.api_key and genai:
             try:
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel("gemini-1.5-flash")
-                print("[TutorService] Gemini API connected successfully.")
+                model_name = "gemini-3.8-flash"
+                self.model = genai.GenerativeModel(model_name)
+                print(f"[TutorService] Gemini API connected successfully ({model_name}).")
             except Exception as e:
                 print(f"[TutorService] Gemini config warning: {e}")
         else:
@@ -97,13 +98,18 @@ class TutorService:
             return f"You asked about '{q_clean}'. Please hold your textbook in front of the camera and click 'Read Text Aloud', or configure GEMINI_API_KEY in backend/.env for comprehensive live answers."
 
         system_prompt = f"""
-You are a patient academic tutor for a visually impaired student.
-The answer will be read aloud via Text-to-Speech:
-1. Keep the answer direct, concise, and easy to understand (under 4 sentences).
-2. Avoid bullet points, asterisks, math formulas, or formatting symbols that sound strange when spoken.
-3. Reference the student's study material context if relevant.
+You are an assistive academic tutor for a visually impaired student.
+The response will be read aloud via Text-to-Speech:
+1. Speak in direct, friendly, and concise spoken sentences (under 4 sentences by default).
+2. NEVER use markdown symbols, asterisks, bullet points, headers, or formatting that sounds strange when spoken aloud.
+3. CONTEXT USAGE:
+   - If the student asks about their physical workspace, surroundings, or what is in front of or around them, answer using the Live Environment (Detected Objects) context.
+   - If the student asks to explain, summarize, or asks questions about "this", use the Attached Scanned Text context.
+   - For follow-up questions (e.g., "give me an example", "what are the advantages"), maintain context from the Recent Conversation history.
+   - If the student asks a general educational question, answer directly with accurate foundational knowledge.
+4. If asked for a quiz, ask 1 or 2 quick questions without giving away answers immediately.
 
-Study Material Scanned:
+Available Context:
 \"\"\"{context_text}\"\"\"
 
 Student Question:
@@ -111,9 +117,99 @@ Student Question:
 """
         try:
             res = self.model.generate_content(system_prompt)
-            return res.text.replace("*", "").replace("#", "").strip()
+            clean_ans = re.sub(r'[*#_`~>]', '', res.text)
+            clean_ans = re.sub(r'\s+', ' ', clean_ans).strip()
+            return clean_ans
         except Exception as e:
-            return f"The academic tutor encountered an issue: {str(e)}"
+            err_str = str(e)
+            print(f"[TutorService] Gemini generation error: {err_str}")
+            # If rate limit or temporary issue, fallback to contextual extractor
+            if "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
+                return "The live AI service reached its temporary request limit. Please try again in a few moments."
+            return f"The academic tutor encountered an issue: {err_str}"
+
+    def summarize_text(self, text: str) -> str:
+        """
+        P5.1 - P5.2 Strict Summary Contract:
+        Input: OCR text ONLY.
+        Output: Concise 2-sentence academic summary.
+        Never describes image or camera frame.
+        """
+        clean = (text or "").strip()
+        words = clean.split()
+        if len(words) < 5:
+            return "Not enough readable text was detected to create a reliable summary. Please hold your document closer and scan again."
+
+        if self.model:
+            prompt = f"""
+You are an assistive tutor for a visually impaired student.
+Summarize the following extracted document text in 2 to 3 concise, clear sentences.
+Identify the main subject, key ideas, and important facts.
+
+RULES:
+1. Base the summary EXCLUSIVELY on the provided document text.
+2. Do NOT describe the image, camera frame, or paper background.
+3. Do NOT invent information not present in the text.
+4. Do NOT use bullet points, asterisks, or markdown symbols as this will be read aloud.
+
+DOCUMENT TEXT:
+\"\"\"{clean}\"\"\"
+"""
+            try:
+                res = self.model.generate_content(prompt)
+                return res.text.replace("*", "").replace("#", "").strip()
+            except Exception as e:
+                print(f"[TutorService] Gemini summarize error: {e}")
+
+        # Intelligent deterministic fallback extraction
+        sentences = [s.strip() for s in re.split(r'[.\n]+', clean) if len(s.strip()) > 15]
+        if sentences:
+            lead = sentences[0]
+            if not lead.endswith("."):
+                lead += "."
+            if len(sentences) > 1:
+                second = sentences[1]
+                if not second.endswith("."):
+                    second += "."
+                return f"Summary of your notes: {lead} Furthermore, {second}"
+            return f"Summary of your notes: {lead}"
+
+        sample = " ".join(words[:45])
+        return f"Summary: {sample}."
+
+    def explain_text(self, text: str) -> str:
+        """
+        P5.3 Explanation Contract:
+        Explains extracted text simply and accurately without visual hallucinations.
+        """
+        clean = (text or "").strip()
+        words = clean.split()
+        if len(words) < 3:
+            return "Not enough readable text was detected to explain. Please point your camera at the study page and try again."
+
+        if self.model:
+            prompt = f"""
+You are an assistive tutor for a visually impaired student.
+Explain the meaning and core concepts of the following extracted study text in simple, clear language.
+
+RULES:
+1. Explain the concepts present in the text directly.
+2. Do NOT describe the camera or image.
+3. Do NOT use markdown symbols, asterisks, or bullet points.
+4. Keep the explanation under 4 sentences so it is comfortable to hear spoken aloud.
+
+STUDY TEXT:
+\"\"\"{clean}\"\"\"
+"""
+            try:
+                res = self.model.generate_content(prompt)
+                return res.text.replace("*", "").replace("#", "").strip()
+            except Exception as e:
+                print(f"[TutorService] Gemini explain error: {e}")
+
+        # Fallback explanation
+        lead_sentence = clean.split(".")[0].strip()
+        return f"This passage discusses: {lead_sentence}. It explains the essential principles and details outlined in your study material."
 
 
 if __name__ == "__main__":

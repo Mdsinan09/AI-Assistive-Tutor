@@ -1,0 +1,25 @@
+{
+  "short_name": "AssistiveTutor",
+  "name": "AI Assistive Tutor for Visually Impaired Students",
+  "description": "Voice-first multimodal assistive tutor with real-time FieldNet object detection, OCR reading, and AI conversational tutoring.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#000000",
+  "theme_color": "#0071e3",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/"
+}

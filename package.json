@@ -1,0 +1,12 @@
+{
+  "name": "ai-assistive-tutor-root",
+  "version": "2.2.0",
+  "private": true,
+  "description": "AI Assistive Tutor for Visually Impaired Students - Root workspace scripts",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev -- --host",
+    "dev:frontend": "npm --prefix frontend run dev -- --host",
+    "build": "npm --prefix frontend run build",
+    "backend": "python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+  }
+}

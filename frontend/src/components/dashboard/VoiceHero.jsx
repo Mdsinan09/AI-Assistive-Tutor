@@ -7,31 +7,62 @@ export default function VoiceHero() {
   const {
     voiceState,
     transcript,
+    interimTranscript,
     lastAction,
     errorMessage,
     startListening,
+    stopListening,
     stopSpeaking,
     repeatLast,
+    isSpeaking,
     setIsPromptOpen,
   } = useVoice();
 
-  const isListening = voiceState === "LISTENING";
-  const isSpeaking = voiceState === "SPEAKING";
-  const isProcessing = voiceState === "PROCESSING";
+  const isListening =
+    voiceState === "listening" ||
+    voiceState === "requesting_permission" ||
+    voiceState === "LISTENING";
+  const isSpeakingState =
+    voiceState === "responding" ||
+    voiceState === "speaking" ||
+    voiceState === "SPEAKING" ||
+    isSpeaking;
+  const isProcessing =
+    voiceState === "processing" ||
+    voiceState === "processing_speech" ||
+    voiceState === "thinking" ||
+    voiceState === "PROCESSING";
+  const isPermissionDenied = voiceState === "permission_denied";
+  const isNoSpeech = voiceState === "no_speech";
+  const isError =
+    voiceState === "error" ||
+    voiceState === "network_error" ||
+    voiceState === "recognition_error" ||
+    voiceState === "unsupported_browser";
 
   const getStatusBadge = () => {
-    switch (voiceState) {
-      case "LISTENING":
-        return { text: "Listening to your voice...", color: "var(--accent-primary)", pulse: true };
-      case "PROCESSING":
-        return { text: "Analyzing query & AI intent...", color: "var(--accent-amber)", pulse: true };
-      case "SPEAKING":
-        return { text: "Speaking response aloud...", color: "var(--accent-green)", pulse: true };
-      case "ERROR":
-        return { text: "Voice error occurred", color: "var(--accent-rose)", pulse: false };
-      default:
-        return { text: "Voice Assistant Ready (Press 'V' to speak)", color: "var(--text-tertiary)", pulse: false };
+    if (voiceState === "requesting_permission") {
+      return { text: "Requesting microphone permission...", color: "var(--accent-amber)", pulse: true };
     }
+    if (isListening) {
+      return { text: "Listening to your voice... (Tap to finish)", color: "var(--accent-green, #10b981)", pulse: true };
+    }
+    if (isProcessing) {
+      return { text: "Understanding & routing AI query...", color: "var(--accent-amber)", pulse: true };
+    }
+    if (isSpeakingState) {
+      return { text: "Speaking response aloud...", color: "var(--accent-green)", pulse: true };
+    }
+    if (isPermissionDenied) {
+      return { text: "Microphone blocked (Click lock in address bar)", color: "var(--accent-rose)", pulse: false };
+    }
+    if (isNoSpeech) {
+      return { text: "No words heard. Tap to try again.", color: "var(--accent-amber)", pulse: false };
+    }
+    if (isError) {
+      return { text: errorMessage || "Voice error occurred", color: "var(--accent-rose)", pulse: false };
+    }
+    return { text: "Voice Assistant Ready (Press 'V' to speak)", color: "var(--text-tertiary)", pulse: false };
   };
 
   const status = getStatusBadge();
@@ -72,28 +103,32 @@ export default function VoiceHero() {
       {/* Central Animated Mic Orb */}
       <div style={{ position: "relative", zIndex: 5 }}>
         <button
-          onClick={() => startListening()}
-          aria-label={isListening ? "Stop listening" : "Start speaking voice command. Shortcut: V"}
+          onClick={() => (isListening ? stopListening() : startListening())}
+          aria-label={isListening ? "Finish speaking and submit" : "Start speaking voice command. Shortcut: V"}
           style={{
             width: "84px",
             height: "84px",
             borderRadius: "50%",
             background: isListening
-              ? "var(--accent-primary)"
-              : isSpeaking
+              ? "var(--accent-green, #10b981)"
+              : isSpeakingState
               ? "var(--accent-green)"
               : "var(--glass-bg-base)",
             border: `3px solid ${
-              isListening ? "var(--accent-primary)" : isSpeaking ? "var(--accent-green)" : "var(--glass-border-subtle)"
+              isListening
+                ? "var(--accent-green, #10b981)"
+                : isSpeakingState
+                ? "var(--accent-green)"
+                : "var(--glass-border-subtle)"
             }`,
-            color: isListening || isSpeaking ? "#ffffff" : "var(--text-primary)",
+            color: isListening || isSpeakingState ? "#ffffff" : "var(--text-primary)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             cursor: "pointer",
             boxShadow: isListening
-              ? "0 0 35px var(--accent-primary)"
-              : isSpeaking
+              ? "0 0 35px rgba(16, 185, 129, 0.75)"
+              : isSpeakingState
               ? "0 0 30px var(--accent-green)"
               : "var(--shadow-elevation-low)",
             transition: "all var(--motion-normal)",
@@ -101,7 +136,7 @@ export default function VoiceHero() {
         >
           {isListening ? (
             <Mic size={36} className="animate-pulse" />
-          ) : isSpeaking ? (
+          ) : isSpeakingState ? (
             <Volume2 size={36} className="animate-bounce" />
           ) : (
             <Mic size={36} />
@@ -125,10 +160,10 @@ export default function VoiceHero() {
             key={idx}
             style={{
               width: "4px",
-              height: isListening || isSpeaking ? `${height}px` : "6px",
+              height: isListening || isSpeakingState ? `${height}px` : "6px",
               backgroundColor: isListening
-                ? "var(--accent-primary)"
-                : isSpeaking
+                ? "var(--accent-green, #10b981)"
+                : isSpeakingState
                 ? "var(--accent-green)"
                 : "var(--glass-border-subtle)",
               borderRadius: "999px",
@@ -164,8 +199,8 @@ export default function VoiceHero() {
         </div>
       </div>
 
-      {/* Recognized Transcript or Error */}
-      <div style={{ maxWidth: "680px", zIndex: 5 }}>
+      {/* Recognized Transcript or Error (Priority 2 Live Transcription) */}
+      <div style={{ maxWidth: "680px", zIndex: 5, width: "100%" }}>
         {errorMessage ? (
           <div
             style={{
@@ -180,20 +215,29 @@ export default function VoiceHero() {
             <AlertCircle size={16} />
             <span>{errorMessage}</span>
           </div>
-        ) : transcript ? (
+        ) : transcript || interimTranscript ? (
           <div
             style={{
-              fontSize: "1.1rem",
-              fontWeight: 550,
-              color: "var(--text-primary)",
+              fontSize: "1.05rem",
               lineHeight: 1.5,
-              padding: "0.5rem 1rem",
+              padding: "0.6rem 1.1rem",
               backgroundColor: "var(--glass-bg-subtle)",
               borderRadius: "var(--radius-md)",
               border: "1px solid var(--glass-border-subtle)",
+              textAlign: "center",
             }}
           >
-            "{transcript}"
+            {transcript && (
+              <span style={{ fontWeight: 650, color: "var(--text-primary)" }}>
+                "{transcript}"{" "}
+              </span>
+            )}
+            {interimTranscript && (
+              <span style={{ fontStyle: "italic", color: "var(--accent-blue, #60a5fa)", opacity: 0.9 }}>
+                {interimTranscript}
+                <span className="animate-pulse">|</span>
+              </span>
+            )}
           </div>
         ) : (
           <div style={{ fontSize: "0.92rem", color: "var(--text-secondary)" }}>
@@ -215,18 +259,23 @@ export default function VoiceHero() {
         }}
       >
         <GlassButton
-          variant="secondary"
-          onClick={() => startListening()}
-          style={{ padding: "0.45rem 0.9rem", fontSize: "0.85rem" }}
+          variant={isListening ? "primary" : "secondary"}
+          onClick={() => (isListening ? stopListening() : startListening())}
+          style={{
+            padding: "0.45rem 0.9rem",
+            fontSize: "0.85rem",
+            background: isListening ? "var(--accent-green, #10b981)" : undefined,
+            color: isListening ? "#fff" : undefined,
+          }}
         >
           <Mic size={15} />
-          <span>{isListening ? "Stop Listening" : "Speak (V)"}</span>
+          <span>{isListening ? "Finish & Submit" : "Speak (V)"}</span>
         </GlassButton>
 
         <GlassButton
           variant="secondary"
           onClick={stopSpeaking}
-          disabled={!isSpeaking}
+          disabled={!isSpeakingState}
           style={{ padding: "0.45rem 0.9rem", fontSize: "0.85rem" }}
         >
           <VolumeX size={15} />

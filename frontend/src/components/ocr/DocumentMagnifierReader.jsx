@@ -86,20 +86,17 @@ export default function DocumentMagnifierReader() {
   };
 
   const handleSummarize = async () => {
-    if (!ocrResult?.text) return;
+    if (!ocrResult?.text || ocrResult.text.trim().split(/\s+/).length < 5) return;
     setIsSummarizing(true);
     stopSpeaking();
 
     try {
-      const res = await tutorApi.ask(
-        "Please provide a clear and concise 2-sentence summary of this uploaded textbook page for a student.",
-        ocrResult.text
-      );
-      const summary = res.answer || "Could not generate summary.";
+      const res = await tutorApi.summarize(ocrResult.text.trim());
+      const summary = res.summary || res.answer || "Could not generate summary.";
       setSummaryText(summary);
       speak(summary);
     } catch {
-      const fallbackSum = ocrResult.text.slice(0, 180) + "...";
+      const fallbackSum = "Could not generate summary from this document text.";
       setSummaryText(fallbackSum);
       speak(fallbackSum);
     } finally {

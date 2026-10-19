@@ -3,9 +3,10 @@ import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 
 export default function ProtectedRoute({ children }) {
-  const { user, token, loading } = useAuth();
+  const { user, token, loading, isLoading } = useAuth();
+  const isAuthLoading = Boolean(isLoading ?? loading);
 
-  if (loading) {
+  if (isAuthLoading) {
     return (
       <div
         style={{
@@ -37,7 +38,7 @@ export default function ProtectedRoute({ children }) {
     );
   }
 
-  if (!token && !user) {
+  if (!token) {
     return <Navigate to="/login" replace />;
   }
 

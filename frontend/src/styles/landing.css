@@ -1,0 +1,176 @@
+/* ==========================================================================
+   AI ASSISTIVE TUTOR — EDITORIAL LANDING PAGE STYLES
+   ========================================================================== */
+
+:root {
+  --lp-bg: #050608;
+  --lp-bg-subtle: #090c14;
+  --lp-surface: rgba(15, 20, 32, 0.72);
+  --lp-surface-elevated: rgba(22, 28, 44, 0.85);
+  --lp-border: rgba(255, 255, 255, 0.08);
+  --lp-border-hover: rgba(255, 255, 255, 0.18);
+  --lp-border-accent: rgba(41, 151, 255, 0.35);
+  --lp-text-primary: #f8fafc;
+  --lp-text-secondary: #94a3b8;
+  --lp-text-tertiary: #64748b;
+  --lp-accent-blue: #2997ff;
+  --lp-accent-blue-hover: #52a9ff;
+  --lp-accent-cyan: #38bdf8;
+  --lp-accent-green: #34d399;
+  --lp-accent-amber: #fbbf24;
+  --lp-glow: rgba(41, 151, 255, 0.15);
+}
+
+.landing-container {
+  background-color: var(--lp-bg);
+  color: var(--lp-text-primary);
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  overflow-x: hidden;
+  font-family: var(--font-sans);
+  selection-background-color: var(--lp-accent-blue);
+}
+
+/* Atmospheric Background Mesh */
+.landing-ambient-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  pointer-events: none;
+  opacity: 0.45;
+  z-index: 0;
+}
+
+/* Subtle Hairline Grid */
+.landing-grid-lines {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 60% 50% at 50% 30%, #000 60%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 30%, #000 60%, transparent 100%);
+  pointer-events: none;
+}
+
+/* Eyebrow Label */
+.landing-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(41, 151, 255, 0.08);
+  border: 1px solid rgba(41, 151, 255, 0.22);
+  color: var(--lp-accent-cyan);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Glass Card */
+.landing-card {
+  background: var(--lp-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--lp-border);
+  border-radius: var(--radius-xl);
+  transition: border-color var(--duration-fast) var(--ease-apple),
+              box-shadow var(--duration-fast) var(--ease-apple),
+              transform var(--duration-fast) var(--ease-apple);
+}
+
+.landing-card:hover {
+  border-color: var(--lp-border-hover);
+  box-shadow: 0 12px 36px -8px rgba(0, 0, 0, 0.75), 0 0 20px -2px var(--lp-glow);
+}
+
+/* Primary Hero Button */
+.landing-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  background: var(--lp-accent-blue);
+  color: #ffffff;
+  padding: 0.85rem 1.75rem;
+  border-radius: 999px;
+  font-weight: 650;
+  font-size: 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 20px rgba(41, 151, 255, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform var(--duration-fast) var(--ease-apple),
+              background var(--duration-fast) var(--ease-apple),
+              box-shadow var(--duration-fast) var(--ease-apple);
+}
+
+.landing-btn-primary:hover {
+  background: var(--lp-accent-blue-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(41, 151, 255, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+}
+
+.landing-btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Secondary Button */
+.landing-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--lp-text-primary);
+  padding: 0.85rem 1.75rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: 1px solid var(--lp-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color var(--duration-fast) var(--ease-apple),
+              background var(--duration-fast) var(--ease-apple),
+              transform var(--duration-fast) var(--ease-apple);
+}
+
+.landing-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+/* Scanning Laser Animation for Text Mode Card */
+@keyframes laserSweep {
+  0% { top: 5%; opacity: 0.2; }
+  50% { top: 92%; opacity: 0.9; }
+  100% { top: 5%; opacity: 0.2; }
+}
+
+.animate-laser {
+  animation: laserSweep 3.6s ease-in-out infinite;
+}
+
+/* Waveform pulse for voice visualizer */
+@keyframes voicePulse {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+  50% { transform: scaleY(1.0); opacity: 1; }
+}
+
+.voice-bar {
+  animation: voicePulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-laser, .voice-bar, .landing-card, .landing-btn-primary, .landing-btn-secondary {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,18 +1,19 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useVoice } from "../../context/VoiceContext";
 import {
-  Sparkles,
   Volume2,
   VolumeX,
   FileText,
-  RotateCcw,
-  BookOpen,
   Eye,
   Bot,
   MessageSquare,
+  ArrowRight,
+  CheckCircle2,
+  Copy,
+  Check,
 } from "lucide-react";
 import GlassButton from "../glass/GlassButton";
-import { tutorApi } from "../../api/tutorApi";
 
 export default function AssistantContextPanel({
   activeContext,
@@ -20,6 +21,7 @@ export default function AssistantContextPanel({
   detections = [],
   narration = "",
 }) {
+  const navigate = useNavigate();
   const {
     voiceState,
     transcript,
@@ -28,15 +30,23 @@ export default function AssistantContextPanel({
     stopSpeaking,
   } = useVoice();
 
-  const [isSummarizing, setIsSummarizing] = useState(false);
-  const [summaryText, setSummaryText] = useState("");
-  const [isExplaining, setIsExplaining] = useState(false);
-  const [explanationText, setExplanationText] = useState("");
+  const [isCopied, setIsCopied] = useState(false);
 
   // Determine what content to display
-  // 1. If user recently received an OCR result
-  const hasOcr = Boolean(activeContext?.ocrResult?.text);
-  const ocrText = activeContext?.ocrResult?.text || "";
+  // 1. If user has an OCR result or selected text
+  const selectedText = activeContext?.selectedText || "";
+  const rawOcrText = activeContext?.ocrResult?.text || "";
+  const targetText = selectedText || rawOcrText;
+
+  const handleCopy = () => {
+    if (!targetText) return;
+    try {
+      navigator.clipboard?.writeText(targetText);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch {}
+  };
+  const hasOcr = Boolean(targetText);
 
   // 2. Active voice conversation or assistant answer
   const hasVoice = Boolean(transcript || lastSpokenResponse);
@@ -45,56 +55,20 @@ export default function AssistantContextPanel({
   const displayNarration = narration || "FieldNet V3 is actively monitoring your workspace.";
 
   const handleReadAloud = (textToRead) => {
+    const text = textToRead || targetText || lastSpokenResponse || displayNarration;
+    if (!text) return;
     stopSpeaking();
-    speak(textToRead);
+    speak(text);
   };
 
-  const handleSummarize = async () => {
-    const sourceText = ocrText || lastSpokenResponse || displayNarration;
-    if (!sourceText) return;
-
-    setIsSummarizing(true);
-    setExplanationText("");
-    stopSpeaking();
-
-    try {
-      const res = await tutorApi.ask(
-        "Please provide a clear and concise 2-sentence summary of this text for a student.",
-        sourceText
-      );
-      const sum = res.answer || "Could not generate summary.";
-      setSummaryText(sum);
-      speak(sum);
-    } catch {
-      const fallbackSum = sourceText.slice(0, 180) + "...";
-      setSummaryText(fallbackSum);
-      speak(fallbackSum);
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
-
-  const handleExplain = async () => {
-    const sourceText = ocrText || lastSpokenResponse || displayNarration;
-    if (!sourceText) return;
-
-    setIsExplaining(true);
-    setSummaryText("");
-    stopSpeaking();
-
-    try {
-      const res = await tutorApi.ask(
-        "Explain the key concepts and meaning of this study material clearly and simply.",
-        sourceText
-      );
-      const exp = res.answer || "Could not generate explanation.";
-      setExplanationText(exp);
-      speak(exp);
-    } catch {
-      setExplanationText("Explanation unavailable right now.");
-    } finally {
-      setIsExplaining(false);
-    }
+  const handleAskTutor = () => {
+    if (!targetText) return;
+    navigate("/assistive-tutor", {
+      state: {
+        initialContext: targetText,
+        source: "ocr",
+      },
+    });
   };
 
   return (
@@ -143,11 +117,19 @@ export default function AssistantContextPanel({
           </div>
           <div>
             <div style={{ fontWeight: 650, fontSize: "1rem", color: "var(--text-primary)" }}>
-              {hasOcr ? "OCR Document Context" : hasVoice ? "Voice Dialogue" : "Live Spatial Awareness"}
+              {selectedText
+                ? "Selected Text Context"
+                : hasOcr
+                ? "Scanned Document Context"
+                : hasVoice
+                ? "Voice Dialogue"
+                : "Live Spatial Awareness"}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-tertiary)" }}>
-              {hasOcr
-                ? `${activeContext?.ocrResult?.word_count || 0} words extracted from camera`
+              {selectedText
+                ? `${selectedText.split(/\s+/).length} words selected`
+                : hasOcr
+                ? `${activeContext?.ocrResult?.word_count || targetText.split(/\s+/).length} words extracted from camera`
                 : hasVoice
                 ? "Context-aware response"
                 : `${detections.length} objects currently tracked`}
@@ -159,7 +141,7 @@ export default function AssistantContextPanel({
         <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
           <GlassButton
             variant="secondary"
-            onClick={() => handleReadAloud(summaryText || explanationText || ocrText || lastSpokenResponse || displayNarration)}
+            onClick={() => handleReadAloud()}
             style={{ padding: "0.35rem 0.75rem", fontSize: "0.8rem" }}
           >
             <Volume2 size={14} />
@@ -175,25 +157,21 @@ export default function AssistantContextPanel({
             <span>Stop</span>
           </GlassButton>
 
-          <GlassButton
-            variant="secondary"
-            onClick={handleExplain}
-            disabled={isExplaining || (!ocrText && !lastSpokenResponse && detections.length === 0)}
-            style={{ padding: "0.35rem 0.75rem", fontSize: "0.8rem" }}
-          >
-            <Sparkles size={14} color="var(--accent-primary)" />
-            <span>{isExplaining ? "Explaining..." : "Explain"}</span>
-          </GlassButton>
-
-          <GlassButton
-            variant="secondary"
-            onClick={handleSummarize}
-            disabled={isSummarizing || (!ocrText && !lastSpokenResponse && detections.length === 0)}
-            style={{ padding: "0.35rem 0.75rem", fontSize: "0.8rem" }}
-          >
-            <BookOpen size={14} color="var(--accent-amber)" />
-            <span>{isSummarizing ? "Summarizing..." : "Summarize"}</span>
-          </GlassButton>
+          {hasOcr && (
+            <GlassButton
+              variant="primary"
+              onClick={handleAskTutor}
+              style={{
+                padding: "0.35rem 0.85rem",
+                fontSize: "0.8rem",
+                background: "linear-gradient(135deg, var(--accent-primary), var(--accent-blue-deep, #1d4ed8))",
+                color: "#fff",
+              }}
+            >
+              <span>Ask Tutor</span>
+              <ArrowRight size={14} />
+            </GlassButton>
+          )}
         </div>
       </div>
 
@@ -228,52 +206,60 @@ export default function AssistantContextPanel({
           </div>
         )}
 
-        {/* Display Explanation if triggered */}
-        {explanationText ? (
+        {hasOcr ? (
+          /* Display OCR Text from Camera / Selection */
           <div>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-primary)", marginBottom: "0.2rem", textTransform: "uppercase" }}>
-              Explanation
-            </div>
-            <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: 1.55 }}>
-              {explanationText}
-            </div>
-          </div>
-        ) : summaryText ? (
-          /* Display Summary if triggered */
-          <div>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-amber)", marginBottom: "0.2rem", textTransform: "uppercase" }}>
-              Summary
-            </div>
-            <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: 1.55 }}>
-              {summaryText}
-            </div>
-          </div>
-        ) : hasOcr ? (
-          /* Display OCR Text from Camera */
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.3rem" }}>
-              <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-amber)", textTransform: "uppercase" }}>
-                Captured Textbook Text
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem", flexWrap: "wrap", gap: "0.3rem" }}>
+              <span style={{ fontSize: "0.75rem", fontWeight: 700, color: selectedText ? "var(--accent-primary)" : "var(--accent-amber)", textTransform: "uppercase" }}>
+                {selectedText ? "Selected Text" : "Captured Textbook Text"}
               </span>
-              {activeContext?.ocrResult?.confidence_score > 0 && (
-                <span className="glass-pill success" style={{ fontSize: "0.7rem", padding: "2px 6px" }}>
-                  Confidence: {activeContext.ocrResult.confidence_score}%
-                </span>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <button
+                  onClick={handleCopy}
+                  style={{
+                    background: isCopied ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.08)",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    color: isCopied ? "var(--accent-green)" : "var(--text-secondary)",
+                    padding: "2px 8px",
+                    borderRadius: "4px",
+                    fontSize: "0.72rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                  title="Copy text to clipboard"
+                >
+                  {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                  <span>{isCopied ? "Copied" : "Copy"}</span>
+                </button>
+                {activeContext?.ocrResult?.confidence_score > 0 && !selectedText && (
+                  <span className="glass-pill success" style={{ fontSize: "0.7rem", padding: "2px 6px" }}>
+                    Confidence: {activeContext.ocrResult.confidence_score}%
+                  </span>
+                )}
+              </div>
             </div>
             <div
               tabIndex={0}
-              aria-label="Recognized text from camera"
+              aria-label={selectedText ? "Selected text from camera" : "Recognized text from camera"}
               style={{
                 fontSize: "0.95rem",
                 color: "var(--text-primary)",
-                lineHeight: 1.6,
-                maxHeight: "220px",
+                lineHeight: 1.65,
+                maxHeight: "340px",
                 overflowY: "auto",
                 whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                userSelect: "text",
+                background: selectedText ? "rgba(99, 102, 241, 0.08)" : "rgba(0, 0, 0, 0.2)",
+                padding: "0.75rem",
+                borderRadius: "var(--radius-sm)",
+                borderLeft: selectedText ? "3px solid var(--accent-primary)" : "none",
+                border: "1px solid var(--glass-border-subtle)",
               }}
             >
-              {ocrText}
+              {targetText}
             </div>
           </div>
         ) : lastSpokenResponse ? (
@@ -287,13 +273,18 @@ export default function AssistantContextPanel({
             </div>
           </div>
         ) : (
-          /* Fallback: Live Spatial Narration */
-          <div>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-primary)", marginBottom: "0.2rem", textTransform: "uppercase" }}>
-              Spatial Narration
+          /* Fallback / Guidance */
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+            <div>
+              <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--accent-primary)", marginBottom: "0.2rem", textTransform: "uppercase" }}>
+                Spatial Narration
+              </div>
+              <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: 1.55 }}>
+                {displayNarration}
+              </div>
             </div>
-            <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: 1.55 }}>
-              {displayNarration}
+            <div style={{ fontSize: "0.8rem", color: "var(--text-tertiary)", fontStyle: "italic", whiteSpace: "nowrap" }}>
+              Tip: Tap "Read Text" on camera to scan textbook
             </div>
           </div>
         )}

@@ -4,13 +4,11 @@
 
 const ENV_API_BASE = import.meta.env.VITE_API_BASE_URL;
 
-const API_BASE = ENV_API_BASE 
+const API_BASE = ENV_API_BASE
   ? ENV_API_BASE.replace(/\/+$/, "")
-  : (typeof window !== "undefined" && (window.location.port === "5173" || window.location.origin.includes("5173")))
-    ? "" // Vite proxy forwards /api, /detect, /ocr, etc. seamlessly
-    : (typeof window !== "undefined" && window.location.origin)
-      ? window.location.origin
-      : "http://127.0.0.1:8000";
+  : typeof window !== "undefined"
+  ? "" // Always use relative URLs in browser to route through Vite proxy on any port (5173, 5174, etc.)
+  : "http://127.0.0.1:8000";
 
 let onUnauthorizedCallback = null;
 

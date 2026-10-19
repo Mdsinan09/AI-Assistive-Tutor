@@ -55,6 +55,10 @@ export function getCameraDiagnostics() {
 export function useCamera() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const facingModeRef = useRef("environment");
+  const activeDeviceIdRef = useRef(null);
+  const isSwitchingRef = useRef(false);
+  const availableDevicesRef = useRef([]);
 
   // Default facing mode is "environment" (Back Camera)
   const [facingMode, setFacingMode] = useState("environment");
@@ -66,6 +70,11 @@ export function useCamera() {
   const [diagnostics, setDiagnostics] = useState(getCameraDiagnostics);
   const [availableDevices, setAvailableDevices] = useState([]);
   const [activeDeviceId, setActiveDeviceId] = useState(null);
+  const [isTorchSupported, setIsTorchSupported] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+  const [zoom, setZoom] = useState(1.0);
+  const [zoomRange, setZoomRange] = useState({ min: 1.0, max: 3.0, step: 0.1, supported: false });
+  const [isHardwareZoomSupported, setIsHardwareZoomSupported] = useState(false);
 
   // Stop camera stream cleanly and release all hardware tracks
   const stopCamera = useCallback(() => {
@@ -73,6 +82,9 @@ export function useCamera() {
       try {
         const tracks = streamRef.current.getTracks();
         tracks.forEach((track) => {
+          try {
+            track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+          } catch {}
           track.stop();
         });
       } catch (err) {
@@ -81,7 +93,12 @@ export function useCamera() {
       streamRef.current = null;
     }
 
+    setIsTorchOn(false);
+
     if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {}
       videoRef.current.srcObject = null;
     }
     setIsActive(false);
@@ -89,16 +106,132 @@ export function useCamera() {
 
   // Refresh device enumeration
   const refreshDevices = useCallback(async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+      return [];
+    }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter((d) => d.kind === "videoinput");
       setAvailableDevices(videoDevices);
+      availableDevicesRef.current = videoDevices;
       return videoDevices;
-    } catch {
+    } catch (err) {
+      console.warn("[useCamera] Device enumeration warning:", err);
       return [];
     }
   }, []);
+
+  // Bind an acquired stream to the video element and update facing mode states
+  const bindStreamToVideo = useCallback(
+    async (acquiredStream, requestedFacing = null) => {
+      streamRef.current = acquiredStream;
+
+      const currentTrack = acquiredStream.getVideoTracks()[0];
+      let actualFacing = requestedFacing;
+      let currentDeviceId = null;
+
+      if (currentTrack) {
+        const settings = currentTrack.getSettings ? currentTrack.getSettings() : {};
+        currentDeviceId = settings.deviceId || null;
+        const trackLabel = (currentTrack.label || "").toLowerCase();
+
+        // Detect real facing mode from track settings or hardware label
+        if (settings.facingMode) {
+          actualFacing = settings.facingMode;
+        } else if (
+          trackLabel.includes("front") ||
+          trackLabel.includes("user") ||
+          trackLabel.includes("selfie") ||
+          trackLabel.includes("facetime") ||
+          trackLabel.includes("inner")
+        ) {
+          actualFacing = "user";
+        } else if (
+          trackLabel.includes("back") ||
+          trackLabel.includes("rear") ||
+          trackLabel.includes("environment") ||
+          trackLabel.includes("world") ||
+          trackLabel.includes("outer") ||
+          trackLabel.includes("main")
+        ) {
+          actualFacing = "environment";
+        }
+
+        // Attempt to apply continuous autofocus if supported by device hardware
+        try {
+          const capabilities = currentTrack.getCapabilities ? currentTrack.getCapabilities() : {};
+          if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
+            currentTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+          }
+        } catch {}
+      }
+
+      if (!actualFacing) {
+        actualFacing = "environment";
+      }
+
+      facingModeRef.current = actualFacing;
+      setFacingMode(actualFacing);
+
+      if (currentDeviceId) {
+        activeDeviceIdRef.current = currentDeviceId;
+        setActiveDeviceId(currentDeviceId);
+      }
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = acquiredStream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("webkit-playsinline", "true");
+        videoRef.current.muted = true;
+        try {
+          await videoRef.current.play();
+        } catch (e) {
+          console.warn("[useCamera] Video play error (non-fatal):", e);
+        }
+      }
+
+      setHasPermission(true);
+      setIsActive(true);
+      refreshDevices();
+
+      // Check for torch / flashlight hardware capability on active track
+      let supportsTorch = false;
+      if (currentTrack && typeof currentTrack.getCapabilities === "function") {
+        try {
+          const caps = currentTrack.getCapabilities();
+          supportsTorch = Boolean(caps.torch);
+        } catch {
+          supportsTorch = false;
+        }
+      }
+      setIsTorchSupported(supportsTorch);
+      setIsTorchOn(false);
+
+      // Check for camera zoom capability on active track
+      let hwZoomSupported = false;
+      let detectedZoomRange = { min: 1.0, max: 3.0, step: 0.1, supported: false };
+      if (currentTrack && typeof currentTrack.getCapabilities === "function") {
+        try {
+          const caps = currentTrack.getCapabilities();
+          if (caps.zoom) {
+            hwZoomSupported = true;
+            detectedZoomRange = {
+              min: caps.zoom.min || 1.0,
+              max: caps.zoom.max || 3.0,
+              step: caps.zoom.step || 0.1,
+              supported: true,
+            };
+          }
+        } catch (_) {}
+      }
+      setIsHardwareZoomSupported(hwZoomSupported);
+      setZoomRange(detectedZoomRange);
+      setZoom(detectedZoomRange.min || 1.0);
+
+      return true;
+    },
+    [refreshDevices]
+  );
 
   // Start camera with specific facing mode or deviceId
   const startCamera = useCallback(
@@ -124,17 +257,28 @@ export function useCamera() {
         return false;
       }
 
-      const targetFacing = requestedFacingMode || facingMode;
+      const targetFacing = requestedFacingMode || facingModeRef.current || "environment";
 
-      // Always stop previous stream tracks before acquiring a new one
+      // Always stop previous stream tracks and allow mobile hardware to release the camera pipeline
       stopCamera();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
       setErrorMessage("");
       setErrorType(null);
 
       // Construct video constraints with progressive fallback
       const constraintsList = [];
 
+      // 1. If explicit device ID was requested, attempt exact deviceId
       if (requestedDeviceId) {
+        constraintsList.push({
+          video: {
+            deviceId: { exact: requestedDeviceId },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
         constraintsList.push({
           video: {
             deviceId: { exact: requestedDeviceId },
@@ -143,9 +287,49 @@ export function useCamera() {
           },
           audio: false,
         });
+        constraintsList.push({
+          video: { deviceId: requestedDeviceId },
+          audio: false,
+        });
       }
 
-      // 1. Primary: exact/ideal facingMode with HD resolution
+      // 2. Exact facingMode with ideal 1080p Full HD resolution
+      constraintsList.push({
+        video: {
+          facingMode: { exact: targetFacing },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+
+      // 3. Exact facingMode with 720p HD resolution
+      constraintsList.push({
+        video: {
+          facingMode: { exact: targetFacing },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      // 4. Exact facingMode (unconstrained resolution)
+      constraintsList.push({
+        video: {
+          facingMode: { exact: targetFacing },
+        },
+        audio: false,
+      });
+
+      // 5. Ideal facingMode with 1080p / 720p resolution
+      constraintsList.push({
+        video: {
+          facingMode: { ideal: targetFacing },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
       constraintsList.push({
         video: {
           facingMode: { ideal: targetFacing },
@@ -155,17 +339,33 @@ export function useCamera() {
         audio: false,
       });
 
-      // 2. Fallback: simple facingMode
+      // 6. Simple facingMode
       constraintsList.push({
         video: { facingMode: targetFacing },
         audio: false,
       });
 
-      // 3. Fallback: any video input
-      constraintsList.push({
-        video: true,
-        audio: false,
-      });
+      // 7. Generic video fallback (only when no specific camera or facing mode is enforced)
+      if (!requestedFacingMode && !requestedDeviceId) {
+        constraintsList.push({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+        constraintsList.push({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        constraintsList.push({
+          video: true,
+          audio: false,
+        });
+      }
 
       let acquiredStream = null;
       let lastError = null;
@@ -176,7 +376,7 @@ export function useCamera() {
           if (acquiredStream) break;
         } catch (err) {
           lastError = err;
-          // If permission is outright denied, no need to try lower constraints
+          // If permission is outright denied, stop attempting lower constraints
           if (
             err.name === "NotAllowedError" ||
             err.name === "PermissionDeniedError" ||
@@ -197,7 +397,7 @@ export function useCamera() {
           setErrorMessage("Camera access is blocked. Please allow camera permissions in your browser settings and tap Try Again.");
         } else if (lastError?.name === "NotReadableError" || lastError?.name === "TrackStartError") {
           setErrorType("DEVICE_IN_USE");
-          setErrorMessage("Camera is currently in use by another application or tab.");
+          setErrorMessage("Camera is currently in use or releasing hardware. Please try again in a moment.");
         } else if (lastError?.name === "NotFoundError" || lastError?.name === "DevicesNotFoundError") {
           setErrorType("NO_CAMERA");
           setErrorMessage("No physical camera device was detected on your device.");
@@ -216,31 +416,7 @@ export function useCamera() {
       }
 
       try {
-        streamRef.current = acquiredStream;
-        setFacingMode(targetFacing);
-
-        const currentTrack = acquiredStream.getVideoTracks()[0];
-        if (currentTrack) {
-          const settings = currentTrack.getSettings ? currentTrack.getSettings() : {};
-          if (settings.deviceId) {
-            setActiveDeviceId(settings.deviceId);
-          }
-        }
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = acquiredStream;
-          videoRef.current.setAttribute("playsinline", "true");
-          videoRef.current.setAttribute("webkit-playsinline", "true");
-          videoRef.current.muted = true;
-          await videoRef.current.play().catch((e) => {
-            console.warn("[useCamera] Video play error (non-fatal):", e);
-          });
-        }
-
-        setHasPermission(true);
-        setIsActive(true);
-        refreshDevices();
-        return true;
+        return await bindStreamToVideo(acquiredStream, targetFacing);
       } catch (err) {
         console.error("[useCamera] Video stream binding error:", err);
         setErrorMessage("Failed to render camera stream.");
@@ -249,29 +425,190 @@ export function useCamera() {
         return false;
       }
     },
-    [facingMode, stopCamera, refreshDevices]
+    [stopCamera, bindStreamToVideo]
   );
 
   // Toggle between Back (environment) and Front (user) cameras
   const toggleFacingMode = useCallback(async () => {
+    if (isSwitchingRef.current) return false;
+    isSwitchingRef.current = true;
     setIsSwitching(true);
-    const nextMode = facingMode === "environment" ? "user" : "environment";
+
+    const currentFacing = facingModeRef.current;
+    const targetFacing = currentFacing === "environment" ? "user" : "environment";
+    console.log(`[useCamera] Toggling camera facing: ${currentFacing} -> ${targetFacing}`);
 
     try {
-      const ok = await startCamera(nextMode);
-      if (!ok && availableDevices.length > 1) {
-        // Fallback: switch to next enumerated camera deviceId
-        const currentIndex = availableDevices.findIndex((d) => d.deviceId === activeDeviceId);
-        const nextIndex = (currentIndex + 1) % availableDevices.length;
-        const nextDevice = availableDevices[nextIndex];
-        if (nextDevice?.deviceId) {
-          await startCamera(null, nextDevice.deviceId);
+      // 1. Fetch fresh list of enumerated video devices
+      const devices = await refreshDevices();
+      const currentDevId = activeDeviceIdRef.current;
+
+      // 2. Identify candidates for switching
+      let targetDeviceId = null;
+
+      if (devices.length > 1) {
+        // A. Check if any device has a label matching targetFacing
+        const targetKeywords =
+          targetFacing === "user"
+            ? ["front", "user", "selfie", "facetime", "inner"]
+            : ["back", "rear", "environment", "world", "outer", "main"];
+
+        const labeledMatch = devices.find((d) => {
+          const l = (d.label || "").toLowerCase();
+          return targetKeywords.some((kw) => l.includes(kw)) && d.deviceId !== currentDevId;
+        });
+
+        if (labeledMatch) {
+          targetDeviceId = labeledMatch.deviceId;
+          console.log(`[useCamera] Found labeled match for ${targetFacing}:`, labeledMatch.label);
+        } else {
+          // B. Cycle to the next device if current active device is known
+          const currentIndex = devices.findIndex((d) => d.deviceId === currentDevId);
+          if (currentIndex !== -1) {
+            const nextDevice = devices[(currentIndex + 1) % devices.length];
+            targetDeviceId = nextDevice.deviceId;
+            console.log(`[useCamera] Cycling to next enumerated device:`, nextDevice.label || nextDevice.deviceId);
+          } else {
+            // Pick a device different from current
+            const otherDevice = devices.find((d) => d.deviceId !== currentDevId);
+            if (otherDevice) {
+              targetDeviceId = otherDevice.deviceId;
+            }
+          }
         }
       }
+
+      // 3. Attempt switch using target facing mode with exact constraints
+      let ok = await startCamera(targetFacing, targetDeviceId);
+
+      // 4. If targetDeviceId was attempted and failed, try standard targetFacing
+      if (!ok && targetDeviceId) {
+        console.log(`[useCamera] Switch by deviceId failed, retrying with facingMode: ${targetFacing}`);
+        ok = await startCamera(targetFacing, null);
+      }
+
+      // 5. If exact targetFacing failed, and there are multiple devices, try cycling through devices
+      if (!ok && devices.length > 1) {
+        for (const dev of devices) {
+          if (dev.deviceId !== currentDevId && dev.deviceId !== targetDeviceId) {
+            console.log(`[useCamera] Trying alternative device:`, dev.label || dev.deviceId);
+            ok = await startCamera(null, dev.deviceId);
+            if (ok) break;
+          }
+        }
+      }
+
+      // 6. If all switch attempts failed, restore previous camera so user is not left with a broken screen
+      if (!ok) {
+        console.warn("[useCamera] Camera switch could not find another camera, restoring original camera");
+        await startCamera(currentFacing, currentDevId);
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error("[useCamera] Camera switch error:", err);
+      return false;
     } finally {
+      isSwitchingRef.current = false;
       setIsSwitching(false);
     }
-  }, [facingMode, startCamera, availableDevices, activeDeviceId]);
+  }, [refreshDevices, startCamera]);
+
+  // Toggle phone camera torch / flashlight where supported
+  const toggleTorch = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) {
+      return {
+        success: false,
+        supported: false,
+        message: "Camera stream is not active.",
+      };
+    }
+
+    let supportsTorch = false;
+    if (typeof track.getCapabilities === "function") {
+      try {
+        const caps = track.getCapabilities();
+        supportsTorch = Boolean(caps.torch);
+      } catch {
+        supportsTorch = false;
+      }
+    }
+
+    if (!supportsTorch) {
+      return {
+        success: false,
+        supported: false,
+        message: "Flashlight control is not supported on this device.",
+      };
+    }
+
+    const nextTorch = !isTorchOn;
+    try {
+      await track.applyConstraints({
+        advanced: [{ torch: nextTorch }],
+      });
+      setIsTorchOn(nextTorch);
+      return {
+        success: true,
+        supported: true,
+        isOn: nextTorch,
+        message: nextTorch ? "Camera flash turned on." : "Camera flash turned off.",
+      };
+    } catch (err) {
+      console.warn("[useCamera] Torch constraint error:", err);
+      return {
+        success: false,
+        supported: true,
+        message: "Unable to toggle camera flashlight.",
+      };
+    }
+  }, [isTorchOn]);
+
+  // Set camera zoom level with hardware constraint application where supported
+  const setZoomLevel = useCallback(
+    async (requestedZoom) => {
+      const minZ = zoomRange.min || 1.0;
+      const maxZ = zoomRange.max || 3.0;
+      const clamped = Math.max(minZ, Math.min(maxZ, requestedZoom));
+      const rounded = Math.round(clamped * 10) / 10;
+      setZoom(rounded);
+
+      if (isHardwareZoomSupported && streamRef.current) {
+        const vTrack = streamRef.current.getVideoTracks()[0];
+        if (vTrack) {
+          try {
+            await vTrack.applyConstraints({
+              advanced: [{ zoom: rounded }],
+            });
+          } catch (e) {
+            console.debug("[useCamera] Hardware zoom constraint failed, relying on preview zoom:", e);
+          }
+        }
+      }
+      return rounded;
+    },
+    [zoomRange, isHardwareZoomSupported]
+  );
+
+  const zoomIn = useCallback(() => {
+    const step = zoomRange.step || 0.2;
+    const maxZ = zoomRange.max || 3.0;
+    const next = Math.min(maxZ, Math.round((zoom + step) * 10) / 10);
+    return setZoomLevel(next);
+  }, [zoom, zoomRange, setZoomLevel]);
+
+  const zoomOut = useCallback(() => {
+    const step = zoomRange.step || 0.2;
+    const minZ = zoomRange.min || 1.0;
+    const next = Math.max(minZ, Math.round((zoom - step) * 10) / 10);
+    return setZoomLevel(next);
+  }, [zoom, zoomRange, setZoomLevel]);
+
+  const resetZoom = useCallback(() => {
+    return setZoomLevel(zoomRange.min || 1.0);
+  }, [zoomRange, setZoomLevel]);
 
   // Capture frame as JPEG blob with optional scaling for efficient mobile transmission
   const captureBlob = useCallback(
@@ -317,15 +654,15 @@ export function useCamera() {
   );
 
   // High-resolution capture for OCR document reading from the same camera
-  const captureFullFrame = useCallback((format = "image/jpeg", quality = 0.92) => {
+  const captureFullFrame = useCallback((format = "image/jpeg", quality = 0.96) => {
     const video = videoRef.current;
     if (!video || !streamRef.current || video.readyState < 2) {
       return null;
     }
 
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
     const ctx = canvas.getContext("2d", { alpha: false });
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -353,6 +690,10 @@ export function useCamera() {
     isSwitching,
     hasPermission,
     facingMode,
+    facingModeRef,
+    isTorchSupported,
+    isTorchOn,
+    toggleTorch,
     errorMessage,
     errorType,
     diagnostics,
@@ -362,6 +703,13 @@ export function useCamera() {
     toggleFacingMode,
     captureBlob,
     captureFullFrame,
+    zoom,
+    zoomRange,
+    isHardwareZoomSupported,
+    setZoomLevel,
+    zoomIn,
+    zoomOut,
+    resetZoom,
   };
 }
 
