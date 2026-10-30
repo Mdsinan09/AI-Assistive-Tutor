@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ai-assistive-tutor-api
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_PATH
+        value: /tmp/assistive-tutor.db
+      - key: CORS_ORIGINS
+        value: https://ai-assistive-tutor.vercel.app
+      - key: GEMINI_API_KEY
+        sync: false

@@ -1,10 +1,16 @@
 import sqlite3
 import hashlib
 import secrets
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 
-DB_PATH = Path(__file__).resolve().parent / "app.db"
+# Render (and other container hosts) can mount durable storage outside the
+# application directory. Keep the existing local path as the development default.
+DB_PATH = Path(os.environ.get(
+    "DATABASE_PATH",
+    str(Path(__file__).resolve().parent / "app.db"),
+)).expanduser()
 
 
 def get_connection():
