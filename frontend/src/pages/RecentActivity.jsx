@@ -73,14 +73,17 @@ export default function RecentActivity() {
       detail: `Confidence score: ${(d.confidence * 100).toFixed(0)}%`,
       timestamp: d.timestamp || "Recent",
     })),
-    ...(historyData.ocr_history || []).map((o) => ({
-      id: `ocr-${o.id}`,
-      rawId: o.id,
-      type: "ocr",
-      title: "Scanned Document Page",
-      detail: o.extracted_text?.slice(0, 180) + (o.extracted_text?.length > 180 ? "..." : ""),
-      timestamp: o.timestamp || "Recent",
-    })),
+    ...(historyData.ocr_history || []).map((o) => {
+      const textContent = o.extracted_text || o.text || "";
+      return {
+        id: `ocr-${o.id}`,
+        rawId: o.id,
+        type: "ocr",
+        title: "Scanned Document Page",
+        detail: textContent ? (textContent.slice(0, 180) + (textContent.length > 180 ? "..." : "")) : "Document scanned",
+        timestamp: o.timestamp || "Recent",
+      };
+    }),
     ...(historyData.qa_history || []).map((q) => ({
       id: `qa-${q.id}`,
       rawId: q.id,

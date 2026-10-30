@@ -35,6 +35,8 @@ import {
   Plus,
   Minus,
   Loader2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import GlassButton from "../glass/GlassButton";
 import VoiceWaveformOverlay from "../voice/VoiceWaveformOverlay";
@@ -149,6 +151,7 @@ export default function LiveDetection({
   const [ocrActionLoading, setOcrActionLoading] = useState(false);
   const [ocrActionMessage, setOcrActionMessage] = useState("");
   const [isCopiedSelected, setIsCopiedSelected] = useState(false);
+  const [isActionBarCollapsed, setIsActionBarCollapsed] = useState(false);
 
   const handleCopySelected = useCallback(() => {
     if (!selectedText) return;
@@ -330,6 +333,8 @@ export default function LiveDetection({
     stopSpeaking();
     speak("Scanning document text. Please hold the camera steady.");
     announce("Scanning text from camera view.");
+    setSelectedWordIndices(new Set());
+    setSelectedText("");
 
     try {
       // Capture high-resolution native still frame (Section 10)
@@ -390,21 +395,55 @@ export default function LiveDetection({
 
   const handleSelectParagraph = useCallback(() => {
     if (!ocrData || !ocrData.words || ocrData.words.length === 0) return;
-    const targetParId = ocrData.words[0].paragraph_id || "p-1-1";
+    
+    // Collect all unique paragraphs
+    const paragraphs = [];
+    const seenPars = new Set();
+    ocrData.words.forEach((w) => {
+      const pid = w.paragraph_id || "p-1-1";
+      if (!seenPars.has(pid)) {
+        seenPars.add(pid);
+        paragraphs.push(pid);
+      }
+    });
+
+    if (paragraphs.length === 0) return;
+
+    // Determine current paragraph index if already selected
+    let currentParId = null;
+    if (selectedWordIndices.size > 0) {
+      for (const idx of selectedWordIndices) {
+        if (ocrData.words[idx]?.paragraph_id) {
+          currentParId = ocrData.words[idx].paragraph_id;
+          break;
+        }
+      }
+    }
+
+    let nextParIndex = 0;
+    if (currentParId) {
+      const currIdx = paragraphs.indexOf(currentParId);
+      if (currIdx !== -1) {
+        nextParIndex = (currIdx + 1) % paragraphs.length;
+      }
+    }
+
+    const targetParId = paragraphs[nextParIndex];
     const parIndices = new Set();
     const parWords = [];
     ocrData.words.forEach((w, idx) => {
-      if (w.paragraph_id === targetParId) {
+      if ((w.paragraph_id || "p-1-1") === targetParId) {
         parIndices.add(idx);
         parWords.push(w.text);
       }
     });
+
     setSelectedWordIndices(parIndices);
     const txt = parWords.join(" ");
     setSelectedText(txt);
-    speak(`Selected paragraph: ${parWords.length} words.`);
+    speak(`Selected paragraph ${nextParIndex + 1} of ${paragraphs.length}: ${parWords.length} words.`);
     if (onOcrCaptured) onOcrCaptured(ocrData, txt);
-  }, [ocrData, speak, onOcrCaptured]);
+  }, [ocrData, selectedWordIndices, speak, onOcrCaptured]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedWordIndices(new Set());
@@ -1441,21 +1480,29 @@ export default function LiveDetection({
           <div
             style={{
               position: "absolute",
-              top: "3.2rem",
-              left: "0.75rem",
-              right: "0.75rem",
+              top: isFullscreen ? "calc(3.6rem + env(safe-area-inset-top, 0px))" : "3.3rem",
+              left: "0.5rem",
+              right: "0.5rem",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "0.45rem",
+              gap: "0.35rem",
               zIndex: 22,
               flexWrap: "wrap",
+              background: "rgba(10, 15, 26, 0.76)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              padding: "0.3rem 0.5rem",
+              borderRadius: "999px",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              maxWidth: "520px",
+              margin: "0 auto",
             }}
           >
             <button
               onClick={handleSelectAll}
               className="glass-btn"
-              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              style={{ padding: "0.3rem 0.55rem", fontSize: "0.72rem" }}
               title="Select all detected text on the page"
             >
               Select All
@@ -1463,15 +1510,15 @@ export default function LiveDetection({
             <button
               onClick={handleSelectParagraph}
               className="glass-btn"
-              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
-              title="Select paragraph"
+              style={{ padding: "0.3rem 0.55rem", fontSize: "0.72rem" }}
+              title="Cycle through detected paragraphs"
             >
               Select Paragraph
             </button>
             <button
               onClick={handleClearSelection}
               className="glass-btn"
-              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              style={{ padding: "0.3rem 0.55rem", fontSize: "0.72rem" }}
               title="Clear selection"
             >
               Clear
@@ -1480,10 +1527,10 @@ export default function LiveDetection({
               onClick={startOcrScan}
               disabled={isOcrScanning}
               className="glass-btn"
-              style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+              style={{ padding: "0.3rem 0.55rem", fontSize: "0.72rem" }}
               title="Rescan page"
             >
-              <RefreshCw size={13} className={isOcrScanning ? "animate-spin" : ""} />
+              <RefreshCw size={12} className={isOcrScanning ? "animate-spin" : ""} />
               <span>Rescan</span>
             </button>
             <button
@@ -1492,9 +1539,9 @@ export default function LiveDetection({
                 background: "rgba(239, 68, 68, 0.8)",
                 border: "1px solid rgba(239, 68, 68, 0.5)",
                 color: "#ffffff",
-                padding: "0.35rem 0.75rem",
+                padding: "0.3rem 0.65rem",
                 borderRadius: "999px",
-                fontSize: "0.75rem",
+                fontSize: "0.72rem",
                 fontWeight: 600,
                 display: "flex",
                 alignItems: "center",
@@ -1503,8 +1550,8 @@ export default function LiveDetection({
               }}
               title="Exit Text Scan Mode"
             >
-              <X size={13} />
-              <span>Exit Text Mode</span>
+              <X size={12} />
+              <span>Exit</span>
             </button>
           </div>
         )}
@@ -1514,71 +1561,96 @@ export default function LiveDetection({
           <div
             style={{
               position: "absolute",
-              bottom: isFullscreen ? "calc(0.85rem + env(safe-area-inset-bottom, 0px))" : "0.85rem",
-              left: isFullscreen ? "calc(0.75rem + env(safe-area-inset-left, 0px))" : "0.75rem",
-              right: isFullscreen ? "calc(0.75rem + env(safe-area-inset-right, 0px))" : "0.75rem",
-              background: "rgba(10, 15, 26, 0.92)",
+              bottom: isFullscreen ? "calc(0.75rem + env(safe-area-inset-bottom, 0px))" : "0.75rem",
+              left: isFullscreen ? "calc(0.5rem + env(safe-area-inset-left, 0px))" : "0.5rem",
+              right: isFullscreen ? "calc(0.5rem + env(safe-area-inset-right, 0px))" : "0.5rem",
+              maxWidth: "640px",
+              margin: "0 auto",
+              background: "rgba(10, 15, 26, 0.94)",
               backdropFilter: "blur(16px)",
               WebkitBackdropFilter: "blur(16px)",
               border: "1px solid rgba(0, 113, 227, 0.4)",
               borderRadius: "var(--radius-lg)",
-              padding: "0.75rem 1rem",
+              padding: isActionBarCollapsed ? "0.45rem 0.75rem" : "0.65rem 0.85rem",
               zIndex: 25,
               boxShadow: "0 10px 30px rgba(0, 0, 0, 0.6)",
               display: "flex",
               flexDirection: "column",
-              gap: "0.6rem",
+              gap: isActionBarCollapsed ? "0.35rem" : "0.5rem",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-              <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: 600 }}>
-                Selected Text ({selectedWordIndices.size} words):
-              </div>
               <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <div style={{ fontSize: "0.74rem", color: "var(--text-secondary)", fontWeight: 600 }}>
+                  Selected ({selectedWordIndices.size} words)
+                </div>
+                <div style={{ fontSize: "0.68rem", color: "var(--accent-primary)", fontWeight: 650 }}>
+                  Active Ground Truth
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 <button
                   onClick={handleCopySelected}
                   style={{
                     background: isCopiedSelected ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.08)",
                     border: "1px solid rgba(255, 255, 255, 0.15)",
                     color: isCopiedSelected ? "var(--accent-green)" : "var(--text-secondary)",
-                    padding: "2px 7px",
+                    padding: "2px 6px",
                     borderRadius: "4px",
-                    fontSize: "0.7rem",
+                    fontSize: "0.68rem",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
-                    gap: "4px",
+                    gap: "3px",
                   }}
                   title="Copy full selected text"
                 >
                   {isCopiedSelected ? <Check size={11} /> : <Copy size={11} />}
                   <span>{isCopiedSelected ? "Copied" : "Copy"}</span>
                 </button>
-                <div style={{ fontSize: "0.72rem", color: "var(--accent-primary)", fontWeight: 650 }}>
-                  Active Ground Truth
-                </div>
+                <button
+                  onClick={() => setIsActionBarCollapsed((prev) => !prev)}
+                  style={{
+                    background: "rgba(255, 255, 255, 0.08)",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    color: "var(--text-secondary)",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
+                    fontSize: "0.68rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "3px",
+                  }}
+                  title={isActionBarCollapsed ? "Expand text preview" : "Collapse text preview"}
+                >
+                  {isActionBarCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  <span>{isActionBarCollapsed ? "Preview" : "Hide"}</span>
+                </button>
               </div>
             </div>
 
-            <div
-              style={{
-                fontSize: "0.85rem",
-                color: "#ffffff",
-                lineHeight: 1.45,
-                maxHeight: "5.5rem",
-                overflowY: "auto",
-                fontFamily: "inherit",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                userSelect: "text",
-                padding: "0.3rem 0.5rem",
-                background: "rgba(0, 0, 0, 0.25)",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid rgba(255, 255, 255, 0.06)",
-              }}
-            >
-              {selectedText}
-            </div>
+            {!isActionBarCollapsed && (
+              <div
+                style={{
+                  fontSize: "0.82rem",
+                  color: "#ffffff",
+                  lineHeight: 1.4,
+                  maxHeight: "3.5rem",
+                  overflowY: "auto",
+                  fontFamily: "inherit",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  userSelect: "text",
+                  padding: "0.25rem 0.45rem",
+                  background: "rgba(0, 0, 0, 0.25)",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                }}
+              >
+                {selectedText}
+              </div>
+            )}
 
             {/* Action Buttons: Read Aloud | Microphone | Ask Tutor */}
             <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>

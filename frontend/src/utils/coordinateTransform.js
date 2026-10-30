@@ -197,9 +197,11 @@ export class TemporalBoxStabilizer {
             track.box.y + track.box.height / 2 - (det.y + det.height / 2)
           );
 
-          // Proximity score
-          if (iou > 0.25 || centerDist < 90) {
-            const score = iou + Math.max(0, 1 - centerDist / 200);
+          // Proximity threshold dynamically scaled to the object's dimensions
+          // Prevents two nearby distinct people from collapsing into the same track
+          const maxAllowedDist = Math.max(35, Math.min(track.box.width, track.box.height) * 0.65);
+          if (iou > 0.18 || centerDist < maxAllowedDist) {
+            const score = iou * 2 + Math.max(0, 1 - centerDist / (maxAllowedDist * 2));
             if (score > highestScore) {
               highestScore = score;
               bestTrackId = tId;
@@ -237,8 +239,8 @@ export class TemporalBoxStabilizer {
 
         updatedBoxes.push(track.box);
       } else {
-        // New tentative detection (require >= 0.54 confidence to begin track)
-        if (det.confidence >= 0.52) {
+        // New tentative detection (accept valid detections meeting backend threshold >= 0.40)
+        if (det.confidence >= 0.40) {
           const newId = `t-${this.nextTrackId++}`;
           matchedTrackIds.add(newId);
 

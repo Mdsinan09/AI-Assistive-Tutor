@@ -27,7 +27,7 @@ CKPT_PATH = REPO_ROOT / "objectdetection-main" / "outputs" / "v3_ft_mask" / "bes
 DEFAULT_MIN_CONFIDENCE = 0.56
 
 CLASS_CONFIDENCE_THRESHOLDS = {
-    "person": 0.52,
+    "person": 0.42,
     "laptop": 0.54,
     "book_notebook": 0.54,
     "book": 0.54,
@@ -116,9 +116,9 @@ class DetectionService:
         self.decode_cfg = DecodeConfig(
             mode="peak",
             peak_kernel=3,
-            score_thresh=0.45,
-            nms_iou=0.55,
-            max_detections=40,
+            score_thresh=0.30,
+            nms_iou=0.60,
+            max_detections=60,
             image_size=self.image_size,
         )
         self._initialized = True
@@ -212,10 +212,14 @@ class DetectionService:
                 iou = compute_box_iou(candA["box"], candB["box"])
 
                 # Same class overlap suppression
-                if candA["label"] == candB["label"] and iou > 0.42:
-                    suppressed_flags[j] = True
-                # Severe general overlap (one box inside another)
-                elif iou > 0.75:
+                if candA["label"] == candB["label"]:
+                    # Person bounding boxes naturally overlap when people stand or sit near each other
+                    same_class_thresh = 0.58 if candA["label"] == "person" else 0.45
+                    if iou > same_class_thresh:
+                        suppressed_flags[j] = True
+                # Severe general overlap across different classes (e.g. nested duplicate boxes)
+                # Keep threshold high (0.85) so people sitting on chairs or holding items are not suppressed
+                elif iou > 0.85:
                     suppressed_flags[j] = True
 
         # Construct final detection structures with normalized coordinates & spatial positioning
@@ -263,17 +267,37 @@ class DetectionService:
     def generate_spatial_narration(self, detections: list) -> str:
         if not detections:
             return "No obstacles or classroom study objects detected in front of you."
+
+        def format_items(labels: list[str]) -> str:
+            from collections import Counter
+            counts = Counter(labels)
+            parts = []
+            for item, count in counts.items():
+                if count == 1:
+                    article = "an" if item[0].lower() in "aeiou" else "a"
+                    parts.append(f"{article} {item}")
+                elif item == "person":
+                    num_word = {2: "two", 3: "three", 4: "four", 5: "five"}.get(count, str(count))
+                    parts.append(f"{num_word} people")
+                else:
+                    parts.append(f"{count} {item}s")
+            if not parts:
+                return ""
+            if len(parts) == 1:
+                return parts[0]
+            return ", ".join(parts[:-1]) + " and " + parts[-1]
+
         left = [d["label"].replace("_", " ") for d in detections if d["position"] == "left"]
         center = [d["label"].replace("_", " ") for d in detections if d["position"] == "center"]
         right = [d["label"].replace("_", " ") for d in detections if d["position"] == "right"]
 
         phrases = []
         if center:
-            phrases.append(f"In front of you: {', '.join(set(center))}")
+            phrases.append(f"In front of you: {format_items(center)}")
         if left:
-            phrases.append(f"To your left: {', '.join(set(left))}")
+            phrases.append(f"To your left: {format_items(left)}")
         if right:
-            phrases.append(f"To your right: {', '.join(set(right))}")
+            phrases.append(f"To your right: {format_items(right)}")
 
         return ". ".join(phrases) + "."
 

@@ -185,6 +185,12 @@ body.theme-black ::-webkit-scrollbar-thumb {
   }
 }
 
+@media (max-width: 640px) {
+  .grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (min-width: 1025px) {
   .mobile-header {
     display: none !important;
